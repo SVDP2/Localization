@@ -1,0 +1,96 @@
+markers:
+  # Large markers (corners) - 199.5mm
+  - id: 0
+    size: 199.5
+    type: "corner"
+  - id: 1
+    size: 199.5
+    type: "corner"
+  - id: 2
+    size: 199.5
+    type: "corner"
+  - id: 3
+    size: 199.5
+    type: "corner"
+
+  # Medium markers (mid-edges + center) - 60mm
+  - id: 4
+    size: 60.0
+    type: "middle"
+  - id: 5
+    size: 60.0
+    type: "middle"
+  - id: 6
+    size: 60.0
+    type: "middle"
+  - id: 7
+    size: 60.0
+    type: "middle"
+  - id: 8
+    size: 60.0
+    type: "middle"
+
+  # Small markers (between medium markers) - 40mm
+  - id: 9
+    size: 40.0
+    type: "small"
+  - id: 10
+    size: 40.0
+    type: "small"
+  - id: 11
+    size: 40.0
+    type: "small"
+  - id: 12
+    size: 40.0
+    type: "small"
+
+
+
+# ============================================================
+# Board Layout:
+# ============================================================
+# 2            1
+#        6
+#        11
+#  7 12  8  10   5
+#        9
+#        4
+# 3            0
+#
+# Legend:
+# 0-3: Large markers (199.5mm) - corners
+# 4-8: Medium markers (60mm) - mid-edges + center
+# 9-12: Small markers (40mm) - between medium markers
+#
+# ============================================================
+# Board Geometry (for board-based pose estimation)
+# ============================================================
+# All units in mm (convert to meters by multiplying 0.001)
+# Coordinate system: Marker 8 (center) is origin
+
+board_geometry:
+  origin_marker_id: 8  # center marker as coordinate origin
+  description: "Custom Grid Board (Symmetric)"
+
+  marker_positions:  # [x, y, z] in mm, relative to marker 8 center
+    # --- Center (Origin) ---
+    8: [0.0, 0.0, 0.0]
+
+    # --- Inner Cross (Small markers, distance=125mm from center) ---
+    10: [125.0, 0.0, 0.0]    # Right
+    12: [-125.0, 0.0, 0.0]   # Left
+    11: [0.0, 125.0, 0.0]    # Top
+    9: [0.0, -125.0, 0.0]    # Bottom
+
+    # --- Outer Cross (Medium markers, distance=199mm from center) ---
+    5: [199.0, 0.0, 0.0]     # Right
+    7: [-199.0, 0.0, 0.0]    # Left
+    6: [0.0, 199.0, 0.0]     # Top
+    4: [0.0, -199.0, 0.0]    # Bottom
+
+    # --- Corners (Large markers, dx=250mm, dy=250mm from center) ---
+    1: [250.0, 250.0, 0.0]   # Top-Right
+    2: [-250.0, 250.0, 0.0]  # Top-Left
+    3: [-250.0, -250.0, 0.0] # Bottom-Left
+    0: [250.0, -250.0, 0.0]  # Bottom-Right
+

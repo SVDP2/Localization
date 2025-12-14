@@ -1,0 +1,5 @@
+markers:
+  - id: 0
+    size: 100.0  # mm
+    type: "single"
+

@@ -1,0 +1,22 @@
+aruco_detector_node:
+  ros__parameters:
+    # Marker configuration
+    marker_config_file: "config/markers_board.yaml"
+    aruco_dict: "DICT_4X4_50"
+
+    # Camera configuration
+    camera_calibration_file: "config/cam_intrinsic.yaml"
+    camera_frame_id: "camera_link"
+    image_topic: "/usb_cam_3/image_raw"
+
+    # Detection parameters
+    detection_threshold: 0.5
+    publish_rate: 30.0
+
+    # TF configuration
+    publish_tf: true
+    tf_prefix: "aruco_marker_"
+
+    # Board pose estimation
+    use_board_pose: true        # Enable board-based pose estimation
+    min_markers_for_board: 3    # Minimum markers needed for board pose (3-12)
