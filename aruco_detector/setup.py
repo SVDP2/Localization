@@ -24,6 +24,7 @@ setup(
     entry_points={
         'console_scripts': [
             'aruco_detector_node = aruco_detector.aruco_detector_node:main',
+            'tf_distance_viz_node = aruco_detector.tf_distance_viz_node:main',
         ],
     },
 )

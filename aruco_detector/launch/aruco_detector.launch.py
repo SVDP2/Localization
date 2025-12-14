@@ -32,7 +32,23 @@ def generate_launch_description():
         parameters=[params_file],
     )
 
+    distance_viz_node = Node(
+        package='aruco_detector',
+        executable='tf_distance_viz_node',
+        name='tf_distance_viz_node',
+        output='screen',
+        parameters=[
+            {
+                'camera_frame_id': 'camera_link',
+                'target_frame_id': 'aruco_marker_0',
+                'publish_rate': 30.0,
+                'marker_topic': '/aruco_detector/distance_markers',
+            }
+        ],
+    )
+
     return LaunchDescription([
         camera_to_imu_static_tf,
         aruco_detector_node,
+        distance_viz_node,
     ])
