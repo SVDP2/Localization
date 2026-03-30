@@ -1,0 +1,133 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ESKF Localization Node Launch File -->
+
+  <arg name="loc_config_path" default="$(find-pkg-share autoware_launch)/config/localization"/>
+  <arg name="pose_initializer_param_path" default="$(var loc_config_path)/pose_initializer.param.yaml"/>
+  <arg name="enable_twist2accel" default="true" description="Publish /localization/acceleration from ESKF odometry using twist2accel"/>
+  <arg name="twist2accel_param_path" default="$(var loc_config_path)/twist2accel.param.yaml"/>
+  <arg name="use_sim_time" default="false" description="use_sim_time"/>
+
+  <!-- Arguments -->
+  <arg name="init_imu_calibration" default="false"
+       description="If true, perform IMU calibration for 30 seconds (vehicle must be stationary). If false, load calibration from file."/>
+
+  <!-- Optional: user-defined initial pose (kept compatible with pose_initializer default param substitutions) -->
+  <arg name="initial_pose" default="[]" description="initial pose (x, y, z, quat_x, quat_y, quat_z, quat_w)"/>
+  <let name="user_defined_initial_pose/enable" value="$(eval &quot;len($(var initial_pose)) == 7&quot;)"/>
+  <let name="user_defined_initial_pose/pose" value="$(var initial_pose)" if="$(var user_defined_initial_pose/enable)"/>
+  <let name="user_defined_initial_pose/pose" value="[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]" unless="$(var user_defined_initial_pose/enable)"/>
+
+  <!-- Optional include: pose_initializer (Case B / Autoware pipeline compatible init) -->
+  <arg name="enable_pose_initializer" default="true" description="If true, include pose_initializer and wire ESKF init interfaces for /initialpose3d + trigger service"/>
+  <arg name="enable_automatic_pose_initializer" default="true" description="If true, automatically call /api/localization/initialize when localization is uninitialized"/>
+
+  <!-- NOTE: enable_pose_initializer=false(개발/rosbag 모드)일 때만 아래 인자들이 실제로 적용 -->
+  <arg name="init_mode" default="auto" description="auto | external_initialpose"/>
+  <arg name="init_require_trigger" default="false" description="If true, start deactivated until SetBool trigger service is called"/>
+  <arg name="init_reset_on_external_pose" default="true" description="If true, re-initialize on every external initial pose message"/>
+  <arg name="initialpose_topic" default="initialpose" description="External initial pose topic (set to /initialpose3d for Autoware pipeline mode)"/>
+  <arg name="trigger_node_service" default="trigger_node_srv" description="SetBool trigger service name (set to /localization/pose_twist_fusion_filter/trigger_node for Autoware pipeline mode)"/>
+
+  <!-- Resolve init wiring based on enable_pose_initializer (avoid double-switching) -->
+  <let name="resolved_init_mode" value="$(eval &quot;'external_initialpose' if '$(var enable_pose_initializer)'=='true' else '$(var init_mode)'&quot;)"/>
+  <let name="resolved_init_require_trigger" value="$(eval &quot;'true' if '$(var enable_pose_initializer)'=='true' else '$(var init_require_trigger)'&quot;)"/>
+  <let name="resolved_initialpose_topic" value="$(eval &quot;'/initialpose3d' if '$(var enable_pose_initializer)'=='true' else '$(var initialpose_topic)'&quot;)"/>
+  <let name="resolved_trigger_node_service" value="$(eval &quot;'/localization/pose_twist_fusion_filter/trigger_node' if '$(var enable_pose_initializer)'=='true' else '$(var trigger_node_service)'&quot;)"/>
+
+  <!-- KISS-ICP tight coupling (Phase 2) -->
+  <arg name="kiss_icp_enable" default="true" description="Enable tight-coupled KISS-ICP inside ESKF"/>
+  <arg name="kiss_icp_pointcloud_topic" default="/sensing/lidar/concatenated/pointcloud" description="PointCloud2 topic for tight-coupled KISS-ICP"/>
+  <arg name="kiss_icp_enable_yaw_update" default="true" description="Fuse ICP relative yaw into ESKF"/>
+  <arg name="kiss_icp_enable_vy_update" default="true" description="Fuse ICP lateral velocity into ESKF"/>
+  <arg name="kiss_icp_publish_debug_tf" default="true" description="Publish debug TF map->base_link_icp from internal KISS pose"/>
+  <arg name="kiss_icp_debug_child_frame" default="base_link_icp" description="Child frame name for KISS debug TF"/>
+
+  <!-- pose_initializer include (when enabled) -->
+  <group if="$(var enable_pose_initializer)" scoped="false">
+    <push-ros-namespace namespace="localization"/>
+    <push-ros-namespace namespace="util"/>
+    <include file="$(find-pkg-share pose_initializer)/launch/pose_initializer.launch.xml">
+      <arg name="user_defined_initial_pose/enable" value="$(var user_defined_initial_pose/enable)"/>
+      <arg name="user_defined_initial_pose/pose" value="$(var user_defined_initial_pose/pose)"/>
+      <!-- Keep it minimal: GNSS-based init only (NDT/YabLoc off by default here) -->
+      <arg name="ndt_enabled" value="false"/>
+      <arg name="yabloc_enabled" value="false"/>
+      <arg name="gnss_enabled" value="true"/>
+      <!-- pose_initializer uses this flag to decide whether to trigger EKF (we provide the trigger service) -->
+      <arg name="ekf_enabled" value="true"/>
+      <arg name="stop_check_enabled" value="false"/>
+      <arg name="config_file" value="$(var pose_initializer_param_path)"/>
+      <!-- Feed pose_initializer from ESKF-published GNSS pose (enable_pose_initializer also enables this publisher) -->
+      <arg name="sub_gnss_pose_cov" value="/sensing/gnss/pose_with_covariance"/>
+    </include>
+  </group>
+
+  <!-- Automatic localization initialization (calls AD API initialize when uninitialized) -->
+  <include
+    file="$(find-pkg-share automatic_pose_initializer)/launch/automatic_pose_initializer.launch.xml"
+    if="$(eval &quot;'$(var enable_pose_initializer)'=='true' and '$(var enable_automatic_pose_initializer)'=='true'&quot;)"
+  />
+
+  <!-- Node -->
+  <node pkg="eskf_localization" exec="eskf_localization_node" name="eskf_localization" output="screen" >
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+    <!-- IMU calibration switch -->
+    <param name="init_imu_calibration" value="$(var init_imu_calibration)"/>
+
+    <!-- IMU preprocessing (keep only gyro LPF for tuning) -->
+    <param name="imu.gyro_lpf_cutoff_hz" value="10.0"/>
+
+    <!-- GNSS covariance scaling / status-based inflation -->
+    <param name="gnss.covariance_scale" value="2500.0"/>
+    <param name="gnss.pos_inflate_status_fix" value="100000.0"/>
+    <param name="gnss.pos_inflate_status_sbas" value="50.0"/>
+    <param name="gnss.vel_inflate_status_sbas" value="4.0"/>
+    <param name="gnss.vel_inflate_status_fix" value="25.0"/>
+    <!-- Optional GNSS pose output for pose_initializer (tied to enable_pose_initializer) -->
+    <param name="gnss.publish_pose_with_covariance" value="$(var enable_pose_initializer)"/>
+
+    <!-- Heading recovery behavior -->
+    <param name="heading.arb.gphdt_recover_holdoff_sec" value="2.5"/>
+
+    <!-- GNSS recovery transition (pos/vel): holdoff + exponential decay -->
+    <param name="gnss.recover.enable" value="true"/>
+    <param name="gnss.recover.holdoff_sec" value="1.0"/>
+    <param name="gnss.recover.ramp_sec" value="5.0"/>
+    <param name="gnss.recover.pos_max_inflate" value="100.0"/>
+    <param name="gnss.recover.vel_max_inflate" value="50.0"/>
+
+    <!-- Vehicle constraints: ZUPT / NHC -->
+    <param name="vehicle.enable_zupt" value="true"/>
+    <param name="vehicle.zupt_speed_threshold_mps" value="0.2"/>
+    <param name="vehicle.zupt_var" value="0.01"/>
+    <param name="vehicle.enable_nhc" value="false"/>
+    <param name="vehicle.nhc_var" value="0.1"/>
+
+    <!-- Initialization interface -->
+    <param name="init.mode" value="$(var resolved_init_mode)"/>
+    <param name="init.require_trigger" value="$(var resolved_init_require_trigger)"/>
+    <param name="init.reset_on_external_pose" value="$(var init_reset_on_external_pose)"/>
+    <param name="init.external_initialpose_topic" value="$(var resolved_initialpose_topic)"/>
+    <remap from="trigger_node_srv" to="$(var resolved_trigger_node_service)"/>
+
+    <!-- KISS-ICP tight coupling -->
+    <param name="kiss_icp.enable" value="$(var kiss_icp_enable)"/>
+    <param name="kiss_icp.pointcloud_topic" value="$(var kiss_icp_pointcloud_topic)"/>
+    <param name="kiss_icp.enable_yaw_update" value="$(var kiss_icp_enable_yaw_update)"/>
+    <param name="kiss_icp.enable_vy_update" value="$(var kiss_icp_enable_vy_update)"/>
+    <param name="kiss_icp.publish_debug_tf" value="$(var kiss_icp_publish_debug_tf)"/>
+    <param name="kiss_icp.debug_child_frame" value="$(var kiss_icp_debug_child_frame)"/>
+  </node>
+
+  <!-- Compatibility: /localization/acceleration -->
+  <group if="$(var enable_twist2accel)" scoped="false">
+    <include file="$(find-pkg-share twist2accel)/launch/twist2accel.launch.xml">
+      <arg name="in_odom" value="/localization/kinematic_state"/>
+      <arg name="in_twist" value="/localization/twist_estimator/twist_with_covariance"/>
+      <arg name="out_accel" value="/localization/acceleration"/>
+      <arg name="param_file" value="$(var twist2accel_param_path)"/>
+      <arg name="use_sim_time" value="$(var use_sim_time)"/>
+    </include>
+  </group>
+</launch>

@@ -1,0 +1,51 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>eskf_localization</name>
+  <version>0.0.0</version>
+  <description>ESKF-based localization for autonomous vehicles</description>
+  <maintainer email="kikiws70@gmail.com">user1</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>ament_index_cpp</depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>diagnostic_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>autoware_vehicle_msgs</depend>
+  <depend>tier4_map_msgs</depend>
+  <depend>geographic_msgs</depend>
+  <depend>geography_utils</depend>
+  <depend>std_msgs</depend>
+  <depend>kiss_icp</depend>
+
+  <!-- Launch/runtime dependencies -->
+  <exec_depend>autoware_launch</exec_depend>
+  <exec_depend>pose_initializer</exec_depend>
+  <exec_depend>automatic_pose_initializer</exec_depend>
+  <exec_depend>twist2accel</exec_depend>
+
+  <!-- RViz2 plugin dependencies -->
+  <depend>rviz_common</depend>
+  <depend>rviz_rendering</depend>
+  <depend>rviz_ogre_vendor</depend>
+  <depend>pluginlib</depend>
+  <depend>qtbase5-dev</depend>
+
+  <build_depend>eigen</build_depend>
+  <build_depend>eigen3_cmake_module</build_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <rviz_common plugin="${prefix}/plugins_description.xml"/>
+  </export>
+</package>

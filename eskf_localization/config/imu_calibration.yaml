@@ -1,0 +1,22 @@
+# IMU Calibration Data (auto-generated)
+# Calibration assumes vehicle is STATIONARY and reasonably LEVEL
+gyro_bias:
+  x: -0.000876618
+  y: -0.00131364
+  z: 0.000940373
+accel_bias:
+  x: 0.279554
+  y: 0.840991
+  z: -0.0405172
+measured_gravity:
+  x: 0.279554
+  y: 0.840991
+  z: 9.76613
+orientation_bias:
+  x: 0.0429242
+  y: -0.0142685
+  z: 0
+  w: 0.998976
+orientation_bias_valid: true
+calibration_temperature: 25
+sample_count: 5998

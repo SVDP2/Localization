@@ -1,0 +1,9 @@
+<library path="gnss_debug_rviz_plugin">
+  <class name="eskf_localization/GnssDebugDisplay"
+         type="eskf_localization::GnssDebugDisplay"
+         base_class_type="rviz_common::Display">
+    <description>
+      GNSS and Vehicle sensor debugging display with velocity, heading, and fix status visualization
+    </description>
+  </class>
+</library>
