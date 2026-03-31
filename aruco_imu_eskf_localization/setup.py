@@ -31,6 +31,8 @@ setup(
             'aruco_imu_eskf_localization.relative_localization_node:main',
             'tf_distance_viz_node = '
             'aruco_imu_eskf_localization.tf_distance_viz_node:main',
+            'pose_rviz_marker_node = '
+            'aruco_imu_eskf_localization.pose_rviz_marker_node:main',
         ],
     },
 )

@@ -13,6 +13,7 @@ def generate_launch_description():
     enable_camera = LaunchConfiguration('enable_camera')
     enable_imu = LaunchConfiguration('enable_imu')
     enable_vehicle_static_tf = LaunchConfiguration('enable_vehicle_static_tf')
+    enable_pose_viz = LaunchConfiguration('enable_pose_viz')
     publish_aruco_tf = LaunchConfiguration('publish_aruco_tf')
     video_device = LaunchConfiguration('video_device')
     pixel_format = LaunchConfiguration('pixel_format')
@@ -20,7 +21,6 @@ def generate_launch_description():
     image_height = LaunchConfiguration('image_height')
     framerate = LaunchConfiguration('framerate')
     image_topic = LaunchConfiguration('image_topic')
-    camera_info_topic = LaunchConfiguration('camera_info_topic')
     imu_topic = LaunchConfiguration('imu_topic')
 
     localization_params = os.path.join(
@@ -35,6 +35,7 @@ def generate_launch_description():
             DeclareLaunchArgument('enable_camera', default_value='true'),
             DeclareLaunchArgument('enable_imu', default_value='true'),
             DeclareLaunchArgument('enable_vehicle_static_tf', default_value='true'),
+            DeclareLaunchArgument('enable_pose_viz', default_value='true'),
             DeclareLaunchArgument('publish_aruco_tf', default_value='false'),
             DeclareLaunchArgument('video_device', default_value='/dev/video0'),
             DeclareLaunchArgument('pixel_format', default_value='mjpeg2rgb'),
@@ -42,7 +43,6 @@ def generate_launch_description():
             DeclareLaunchArgument('image_height', default_value='480'),
             DeclareLaunchArgument('framerate', default_value='60.0'),
             DeclareLaunchArgument('image_topic', default_value='/image_raw'),
-            DeclareLaunchArgument('camera_info_topic', default_value='/camera_info'),
             DeclareLaunchArgument('imu_topic', default_value='/imu'),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
@@ -90,8 +90,6 @@ def generate_launch_description():
                     aruco_params,
                     {
                         'image_topic': image_topic,
-                        'camera_info_topic': camera_info_topic,
-                        'imu_topic': imu_topic,
                         'publish_tf': publish_aruco_tf,
                     },
                 ],
@@ -107,6 +105,14 @@ def generate_launch_description():
                         'imu_topic': imu_topic,
                     },
                 ],
+            ),
+            Node(
+                package='aruco_imu_eskf_localization',
+                executable='pose_rviz_marker_node',
+                name='pose_rviz_marker_node',
+                output='screen',
+                parameters=[localization_params],
+                condition=IfCondition(enable_pose_viz),
             ),
         ]
     )

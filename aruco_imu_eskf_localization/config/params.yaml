@@ -1,34 +1,23 @@
 aruco_detector_node:
   ros__parameters:
     marker_config_file: config/markers_board.yaml
-    # Preserved from the prior detector code. If the printed board came from a
-    # different 6x6 dictionary, update this parameter only.
     aruco_dict: DICT_6X6_250
     camera_calibration_file: config/cam_intrinsic.yaml
     camera_frame_id: usb_cam
     board_frame: board
     image_topic: /image_raw
-    camera_info_topic: /camera_info
-    imu_topic: /imu
     board_pose_topic: /localization/aruco/board_pose
-    detection_threshold: 0.5
-    publish_rate: 30.0
     publish_tf: true
-    tf_prefix: aruco_marker_
-    use_board_pose: true
     min_markers_for_board: 1
-    reset_timeout_sec: 1.0
-    position_process_noise_std_mps2: 0.3
-    measurement_position_std_xy_m: 0.02
-    measurement_position_std_z_m: 0.05
-    orientation_outlier_threshold_deg: 45.0
-    orientation_measurement_alpha: 0.15
-    output_orientation_std_rad: 0.1
+    min_markers_to_initialize: 2
+    max_position_jump_m: 0.35
+    max_rotation_jump_deg: 55.0
+    max_yaw_jump_deg: 40.0
+    max_reprojection_rmse_px: 6.0
     debug_image_topic: /localization/aruco/debug_image
 
 aruco_imu_eskf_localization_node:
   ros__parameters:
-    imu_topic: /imu
     board_pose_topic: /localization/aruco/board_pose
     odom_topic: /localization/relative/odom
     pose_topic: /localization/relative/pose
@@ -36,20 +25,19 @@ aruco_imu_eskf_localization_node:
     base_frame: base_link
     camera_frame: usb_cam
     publish_tf: true
-    publish_on_imu: true
-    reset_timeout_sec: 1.0
-    position_process_noise_std_mps2: 0.3
-    measurement_position_std_xy_m: 0.02
-    measurement_position_std_z_m: 0.05
-    orientation_outlier_threshold_deg: 45.0
-    orientation_measurement_alpha: 0.15
-    output_orientation_std_rad: 0.1
-    # base_link is the rear axle center.
-    # Wheel axle height is approximately 55 mm from the ground.
     base_to_imu_translation: [0.06, 0.0, 0.095]
     base_to_imu_quaternion_xyzw: [0.0, 0.0, 0.0, 1.0]
-    # Default body->camera rotation matches the existing camera/IMU axis convention:
-    # body(FLU) -> camera optical(Z forward, X right, Y down).
-    # Replace these values with measured extrinsics for the real vehicle.
     base_to_camera_translation: [0.27, 0.0, 0.135]
     base_to_camera_quaternion_xyzw: [-0.5, 0.5, -0.5, 0.5]
+
+pose_rviz_marker_node:
+  ros__parameters:
+    odom_topic: /localization/relative/odom
+    marker_topic: /localization/relative/pose_markers
+    marker_namespace: relative_pose_viz
+    axis_line_width: 0.01
+    text_size: 0.08
+    vehicle_arrow_length: 0.22
+    vehicle_arrow_width: 0.05
+    good_cov_trace: 0.02
+    warn_cov_trace: 0.12
