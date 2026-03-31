@@ -1,0 +1,22 @@
+markers:
+  - id: 0
+    size: 124.0
+    type: left_large
+  - id: 1
+    size: 124.0
+    type: right_large
+  - id: 2
+    size: 62.0
+    type: center_small
+
+# Units are millimeters.
+# Coordinate convention follows the solver/object-point convention in code:
+# +x to the right, +y upward on the board plane.
+# The small marker (ID 2) is the board origin.
+board_geometry:
+  origin_marker_id: 2
+  description: 3-marker board with two large markers above a centered small marker
+  marker_positions:
+    2: [0.0, 0.0, 0.0]
+    0: [-119.0, 93.0, 0.0]
+    1: [119.0, 93.0, 0.0]
