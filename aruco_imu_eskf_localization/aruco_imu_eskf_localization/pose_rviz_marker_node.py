@@ -24,7 +24,7 @@ class PoseRvizMarkerNode(Node):
     def __init__(self) -> None:
         super().__init__('pose_rviz_marker_node')
 
-        self.declare_parameter('odom_topic', '/localization/relative/odom')
+        self.declare_parameter('odom_topic', '/localization/leader_rear/odom')
         self.declare_parameter('marker_topic', '/localization/relative/pose_markers')
         self.declare_parameter('marker_namespace', 'relative_pose_viz')
         self.declare_parameter('axis_line_width', 0.01)
@@ -76,12 +76,55 @@ class PoseRvizMarkerNode(Node):
         marker_array.markers = [
             self._axis_lines_marker(msg, position, color),
             self._vehicle_arrow_marker(msg, position, quat, color),
-            self._text_marker(msg, 10, f'x {position[0]:+.3f} m', _point(position[0] * 0.5, 0.0, 0.03), color),
-            self._text_marker(msg, 11, f'y {position[1]:+.3f} m', _point(0.0, position[1] * 0.5, 0.08), color),
-            self._text_marker(msg, 12, f'z {position[2]:+.3f} m', _point(0.0, 0.0, max(position[2] * 0.5, 0.12)), color),
-            self._text_marker(msg, 13, f'roll {roll_deg:+.1f} deg', _point(position[0], position[1], position[2] + 0.12), color),
-            self._text_marker(msg, 14, f'pitch {pitch_deg:+.1f} deg', _point(position[0], position[1], position[2] + 0.22), color),
-            self._text_marker(msg, 15, f'yaw {yaw_deg:+.1f} deg', _point(position[0], position[1], position[2] + 0.32), color),
+            self._text_marker(
+                msg,
+                10,
+                f'gap x {position[0]:+.3f} m',
+                _point(position[0] * 0.5, 0.0, 0.03),
+                color,
+            ),
+            self._text_marker(
+                msg,
+                11,
+                f'lateral y {position[1]:+.3f} m',
+                _point(0.0, position[1] * 0.5, 0.08),
+                color,
+            ),
+            self._text_marker(
+                msg,
+                12,
+                f'height z {position[2]:+.3f} m',
+                _point(0.0, 0.0, max(position[2] * 0.5, 0.12)),
+                color,
+            ),
+            self._text_marker(
+                msg,
+                13,
+                f'frame {msg.header.frame_id}',
+                _point(0.0, 0.0, 0.22),
+                color,
+            ),
+            self._text_marker(
+                msg,
+                14,
+                f'roll {roll_deg:+.1f} deg',
+                _point(position[0], position[1], position[2] + 0.12),
+                color,
+            ),
+            self._text_marker(
+                msg,
+                15,
+                f'pitch {pitch_deg:+.1f} deg',
+                _point(position[0], position[1], position[2] + 0.22),
+                color,
+            ),
+            self._text_marker(
+                msg,
+                16,
+                f'yaw {yaw_deg:+.1f} deg',
+                _point(position[0], position[1], position[2] + 0.32),
+                color,
+            ),
         ]
         self._marker_pub.publish(marker_array)
 

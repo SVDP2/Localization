@@ -42,7 +42,7 @@ aruco_imu_eskf_localization_node:
 
 pose_rviz_marker_node:
   ros__parameters:
-    odom_topic: /localization/relative/odom
+    odom_topic: /localization/leader_rear/odom
     marker_topic: /localization/relative/pose_markers
     marker_namespace: relative_pose_viz
     axis_line_width: 0.01
