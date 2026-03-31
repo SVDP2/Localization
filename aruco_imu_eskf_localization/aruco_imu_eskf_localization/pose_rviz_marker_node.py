@@ -7,6 +7,7 @@ import rclpy
 from geometry_msgs.msg import Point
 from nav_msgs.msg import Odometry
 from rclpy.duration import Duration
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from scipy.spatial.transform import Rotation
 from visualization_msgs.msg import Marker, MarkerArray
@@ -210,9 +211,12 @@ def main() -> None:
     node = PoseRvizMarkerNode()
     try:
         rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

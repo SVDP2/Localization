@@ -11,6 +11,7 @@ import yaml
 from ament_index_python.packages import get_package_share_directory
 from cv_bridge import CvBridge
 from geometry_msgs.msg import PoseWithCovarianceStamped, TransformStamped
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from scipy.spatial.transform import Rotation
 from sensor_msgs.msg import Image
@@ -19,7 +20,6 @@ from tf2_ros import TransformBroadcaster
 from aruco_imu_eskf_localization.board_pose_estimator import (
     BoardDefinition,
     BoardPoseEstimate,
-    board_pose_to_leader_rear_transform,
     pose_to_matrix,
 )
 from aruco_imu_eskf_localization.frame_conventions import transform_leader_rear_from_board
@@ -402,11 +402,12 @@ def main(args=None) -> None:
     node = ArucoDetectorNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

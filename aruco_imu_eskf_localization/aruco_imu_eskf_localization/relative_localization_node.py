@@ -9,6 +9,7 @@ from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
+from rclpy.executors import ExternalShutdownException
 from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 
 from aruco_imu_eskf_localization.frame_conventions import (
@@ -235,8 +236,9 @@ def main(args=None) -> None:
     node = RelativeLocalizationNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
