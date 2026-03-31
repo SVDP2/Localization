@@ -44,6 +44,13 @@ class ArucoDetectorNode(Node):
         self.declare_parameter('max_rotation_jump_deg', 55.0)
         self.declare_parameter('max_yaw_jump_deg', 40.0)
         self.declare_parameter('max_reprojection_rmse_px', 6.0)
+        self.declare_parameter('front_halfspace_min_z_m', 0.05)
+        self.declare_parameter('max_view_angle_deg', 75.0)
+        self.declare_parameter('feasible_x_min_m', 0.10)
+        self.declare_parameter('feasible_x_max_m', 3.50)
+        self.declare_parameter('feasible_abs_y_max_m', 1.00)
+        self.declare_parameter('feasible_z_min_m', -0.50)
+        self.declare_parameter('feasible_z_max_m', 0.80)
 
         marker_config_file = self.get_parameter('marker_config_file').value
         aruco_dict_name = self.get_parameter('aruco_dict').value
@@ -64,6 +71,17 @@ class ArucoDetectorNode(Node):
         self.max_reprojection_rmse_px = float(
             self.get_parameter('max_reprojection_rmse_px').value
         )
+        self.front_halfspace_min_z_m = float(
+            self.get_parameter('front_halfspace_min_z_m').value
+        )
+        self.max_view_angle_deg = float(self.get_parameter('max_view_angle_deg').value)
+        self.feasible_x_min_m = float(self.get_parameter('feasible_x_min_m').value)
+        self.feasible_x_max_m = float(self.get_parameter('feasible_x_max_m').value)
+        self.feasible_abs_y_max_m = float(
+            self.get_parameter('feasible_abs_y_max_m').value
+        )
+        self.feasible_z_min_m = float(self.get_parameter('feasible_z_min_m').value)
+        self.feasible_z_max_m = float(self.get_parameter('feasible_z_max_m').value)
 
         self.bridge = CvBridge()
         self.board_definition = self._load_board_config(marker_config_file)
@@ -148,6 +166,13 @@ class ArucoDetectorNode(Node):
                 max_position_jump_m=self.max_position_jump_m,
                 max_rotation_jump_deg=self.max_rotation_jump_deg,
                 max_yaw_jump_deg=self.max_yaw_jump_deg,
+                front_halfspace_min_z_m=self.front_halfspace_min_z_m,
+                max_view_angle_deg=self.max_view_angle_deg,
+                feasible_x_min_m=self.feasible_x_min_m,
+                feasible_x_max_m=self.feasible_x_max_m,
+                feasible_abs_y_max_m=self.feasible_abs_y_max_m,
+                feasible_z_min_m=self.feasible_z_min_m,
+                feasible_z_max_m=self.feasible_z_max_m,
             )
 
             if estimate is not None and estimate.reprojection_rmse_px <= self.max_reprojection_rmse_px:

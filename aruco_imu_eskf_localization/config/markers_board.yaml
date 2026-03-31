@@ -10,15 +10,15 @@ markers:
     type: center_small
 
 # Units are millimeters.
-# Board frame for control/localization:
-# +x points outward from the board toward the follower vehicle
-# +y points to the leader vehicle's left
-# +z points upward
+# Geometric board frame:
+# +x points to the board's right when the follower faces the board
+# +y points upward
+# +z points outward from the board toward the follower vehicle
 # The small marker (ID 2) center is used as the current board origin.
 board_geometry:
   origin_marker_id: 2
   description: 3-marker rear board with two large markers above a centered small marker
   marker_positions:
     2: [0.0, 0.0, 0.0]
-    0: [0.0, 119.0, 93.0]
-    1: [0.0, -119.0, 93.0]
+    0: [-119.0, 93.0, 0.0]
+    1: [119.0, 93.0, 0.0]
