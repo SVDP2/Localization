@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from aruco_imu_eskf_localization.frame_conventions import (
+from aruco_imu_eskf_localization.common.frame_conventions import (
     rotation_leader_rear_from_board,
     transform_board_from_leader_rear,
     transform_leader_rear_from_board,

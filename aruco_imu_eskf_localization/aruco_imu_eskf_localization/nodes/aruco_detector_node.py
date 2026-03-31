@@ -17,12 +17,12 @@ from scipy.spatial.transform import Rotation
 from sensor_msgs.msg import Image
 from tf2_ros import TransformBroadcaster
 
-from aruco_imu_eskf_localization.board_pose_estimator import (
+from aruco_imu_eskf_localization.common.frame_conventions import transform_leader_rear_from_board
+from aruco_imu_eskf_localization.estimation.board_pose_estimator import (
     BoardDefinition,
     BoardPoseEstimate,
     pose_to_matrix,
 )
-from aruco_imu_eskf_localization.frame_conventions import transform_leader_rear_from_board
 
 
 PACKAGE_NAME = 'aruco_imu_eskf_localization'
@@ -335,27 +335,54 @@ class ArucoDetectorNode(Node):
         if estimate.visible_markers >= 3:
             base_xy_std = 0.015
             base_z_std = 0.03
-            base_rot_std = np.deg2rad(1.0)
+            base_roll_std = np.deg2rad(8.0)
+            base_pitch_std = np.deg2rad(8.0)
+            base_yaw_std = np.deg2rad(5.0)
         elif estimate.visible_markers == 2:
             base_xy_std = 0.03
             base_z_std = 0.06
-            base_rot_std = np.deg2rad(2.5)
+            base_roll_std = np.deg2rad(12.0)
+            base_pitch_std = np.deg2rad(12.0)
+            base_yaw_std = np.deg2rad(8.0)
         else:
             base_xy_std = 0.07
             base_z_std = 0.12
-            base_rot_std = np.deg2rad(5.0)
+            base_roll_std = np.deg2rad(22.0)
+            base_pitch_std = np.deg2rad(22.0)
+            base_yaw_std = np.deg2rad(14.0)
 
-        reprojection_scale = float(np.clip(1.0 + 0.4 * max(estimate.reprojection_rmse_px - 0.5, 0.0), 1.0, 4.0))
+        reprojection_scale = float(
+            np.clip(1.0 + 0.4 * max(estimate.reprojection_rmse_px - 0.5, 0.0), 1.0, 4.0)
+        )
         area_scale = float(np.clip(np.sqrt(16000.0 / max(estimate.image_area_px, 1.0)), 1.0, 4.0))
-        total_scale = reprojection_scale * area_scale
+        _, board_tvec = estimate.board_pose
+        distance_m = float(np.linalg.norm(board_tvec))
+        cosine_view = float(
+            np.clip(board_tvec[2] / max(distance_m, 1.0e-6), -1.0, 1.0)
+        )
+        view_angle_deg = float(np.degrees(np.arccos(cosine_view)))
+        translation_view_scale = float(
+            np.clip(1.0 + max(view_angle_deg - 55.0, 0.0) / 50.0, 1.0, 2.5)
+        )
+        rotation_view_scale = float(
+            np.clip(1.0 + max(view_angle_deg - 25.0, 0.0) / 20.0, 1.0, 4.0)
+        )
+        fallback_rotation_scale = 2.0 if estimate.used_single_marker_fallback else 1.0
+        translation_scale = reprojection_scale * area_scale * translation_view_scale
+        rotation_scale = (
+            reprojection_scale
+            * area_scale
+            * rotation_view_scale
+            * fallback_rotation_scale
+        )
 
         covariance = np.zeros((6, 6), dtype=float)
-        covariance[0, 0] = (base_xy_std * total_scale) ** 2
-        covariance[1, 1] = (base_xy_std * total_scale) ** 2
-        covariance[2, 2] = (base_z_std * total_scale) ** 2
-        covariance[3, 3] = (base_rot_std * total_scale) ** 2
-        covariance[4, 4] = (base_rot_std * total_scale) ** 2
-        covariance[5, 5] = (base_rot_std * total_scale) ** 2
+        covariance[0, 0] = (base_xy_std * translation_scale) ** 2
+        covariance[1, 1] = (base_xy_std * translation_scale) ** 2
+        covariance[2, 2] = (base_z_std * translation_scale) ** 2
+        covariance[3, 3] = (base_roll_std * rotation_scale) ** 2
+        covariance[4, 4] = (base_pitch_std * rotation_scale) ** 2
+        covariance[5, 5] = (base_yaw_std * rotation_scale) ** 2
         return covariance
 
     def _publish_debug_image(self, debug_image, msg: Image) -> None:

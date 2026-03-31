@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from aruco_imu_eskf_localization.frame_conventions import (
+from aruco_imu_eskf_localization.common.frame_conventions import (
     heading_deg_from_leader_rear_pose,
     transform_leader_rear_from_board,
     vector_leader_rear_from_board,

@@ -1,6 +1,6 @@
 import unittest
 
-from aruco_imu_eskf_localization.aruco_detector_node import pose_prior_is_fresh
+from aruco_imu_eskf_localization.nodes.aruco_detector_node import pose_prior_is_fresh
 
 
 class TestArucoDetectorHelpers(unittest.TestCase):

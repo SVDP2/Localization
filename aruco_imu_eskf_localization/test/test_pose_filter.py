@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from aruco_imu_eskf_localization.pose_filter import PoseFilter
+from aruco_imu_eskf_localization.filters.pose_filter import PoseFilter
 
 
 class TestPoseFilter(unittest.TestCase):

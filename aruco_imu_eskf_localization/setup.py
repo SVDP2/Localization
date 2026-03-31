@@ -26,13 +26,13 @@ setup(
     entry_points={
         'console_scripts': [
             'aruco_detector_node = '
-            'aruco_imu_eskf_localization.aruco_detector_node:main',
+            'aruco_imu_eskf_localization.nodes.aruco_detector_node:main',
             'relative_localization_node = '
-            'aruco_imu_eskf_localization.relative_localization_node:main',
+            'aruco_imu_eskf_localization.nodes.relative_localization_node:main',
             'tf_distance_viz_node = '
-            'aruco_imu_eskf_localization.tf_distance_viz_node:main',
+            'aruco_imu_eskf_localization.nodes.tf_distance_viz_node:main',
             'pose_rviz_marker_node = '
-            'aruco_imu_eskf_localization.pose_rviz_marker_node:main',
+            'aruco_imu_eskf_localization.nodes.pose_rviz_marker_node:main',
         ],
     },
 )

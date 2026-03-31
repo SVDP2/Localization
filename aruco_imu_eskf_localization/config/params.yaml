@@ -1,61 +1,90 @@
 aruco_detector_node:
   ros__parameters:
-    marker_config_file: config/markers_board.yaml
-    aruco_dict: DICT_6X6_250
-    camera_calibration_file: config/cam_intrinsic.yaml
-    camera_frame_id: usb_cam
-    board_frame: board
-    image_topic: /image_raw
-    board_pose_topic: /localization/aruco/board_pose
-    publish_tf: true
-    corner_refinement_method: SUBPIX
-    enable_detected_marker_refinement: true
-    min_markers_for_board: 1
-    min_markers_to_initialize: 2
-    max_position_jump_m: 0.35
-    max_rotation_jump_deg: 55.0
-    max_yaw_jump_deg: 40.0
-    max_heading_jump_deg: 40.0
-    max_reprojection_rmse_px: 6.0
-    front_halfspace_min_z_m: 0.05
-    max_view_angle_deg: 75.0
-    feasible_x_min_m: -3.50
-    feasible_x_max_m: -0.10
-    feasible_abs_y_max_m: 1.00
-    feasible_z_min_m: -0.50
-    feasible_z_max_m: 0.80
-    single_marker_prior_timeout_sec: 0.25
-    single_marker_min_score_margin: 0.25
-    pose_refinement_method: lm
-    base_to_camera_translation: [0.27, 0.0, 0.135]
-    base_to_camera_quaternion_xyzw: [-0.5, 0.5, -0.5, 0.5]
-    debug_image_topic: /localization/aruco/debug_image
+    marker_config_file: config/markers_board.yaml          # 보드 마커 ID/크기/배치 정의 파일
+    aruco_dict: DICT_6X6_250                               # 사용할 ArUco 사전
+    camera_calibration_file: config/cam_intrinsic.yaml     # 카메라 내부 파라미터 파일
+
+    image_topic: /image_raw                                # 입력 영상 토픽
+    board_pose_topic: /localization/aruco/board_pose       # raw board pose 측정 출력
+    debug_image_topic: /localization/aruco/debug_image     # 디버그 오버레이 영상 출력
+    publish_tf: true                                       # detector 단계의 board->camera TF 출력 여부
+
+    camera_frame_id: usb_cam                               # 카메라 프레임 이름
+    board_frame: board                                     # 보드 기준 프레임 이름
+    base_to_camera_translation: [0.27, 0.0, 0.135]        # base_link -> camera 평행이동 [m]
+    base_to_camera_quaternion_xyzw: [-0.5, 0.5, -0.5, 0.5]  # base_link -> camera 회전 [xyzw]
+
+    corner_refinement_method: SUBPIX                       # 코너 refinement 방식
+    enable_detected_marker_refinement: true                # board 기반 누락 마커 재탐색 사용 여부
+    pose_refinement_method: lm                             # solvePnP 이후 pose refinement 방식
+
+    min_markers_for_board: 1                               # pose 계산을 시도할 최소 마커 수
+    min_markers_to_initialize: 2                           # prior 없이 초기화할 최소 마커 수
+    single_marker_prior_timeout_sec: 0.25                  # single-marker fallback prior 유효 시간 [s]
+    single_marker_min_score_margin: 0.25                   # single-marker 후보 점수 차 최소값
+
+    max_position_jump_m: 0.35                              # 연속 프레임 최대 위치 점프 허용치 [m]
+    max_rotation_jump_deg: 55.0                            # 연속 프레임 최대 3D 회전 점프 허용치 [deg]
+    max_yaw_jump_deg: 40.0                                 # 구버전 호환용 heading gate 파라미터 [deg]
+    max_heading_jump_deg: 40.0                             # leader_rear 기준 heading 점프 허용치 [deg]
+    max_reprojection_rmse_px: 6.0                          # 측정 채택 최대 reprojection RMSE [px]
+
+    front_halfspace_min_z_m: 0.05                          # 보드 앞쪽 half-space 최소 z [m]
+    max_view_angle_deg: 75.0                               # 보드를 비스듬히 보는 최대 각도 [deg]
+    feasible_x_min_m: -3.50                                # leader_rear 기준 follower x 최소값 [m]
+    feasible_x_max_m: -0.10                                # leader_rear 기준 follower x 최대값 [m]
+    feasible_abs_y_max_m: 1.00                             # leader_rear 기준 |y| 최대값 [m]
+    feasible_z_min_m: -0.50                                # leader_rear 기준 z 최소값 [m]
+    feasible_z_max_m: 0.80                                 # leader_rear 기준 z 최대값 [m]
 
 aruco_imu_eskf_localization_node:
   ros__parameters:
-    board_pose_topic: /localization/aruco/board_pose
-    odom_topic: /localization/relative/odom
-    pose_topic: /localization/relative/pose
-    leader_rear_odom_topic: /localization/leader_rear/odom
-    leader_rear_pose_topic: /localization/leader_rear/pose
-    board_frame: board
-    leader_rear_frame: leader_rear
-    base_frame: base_link
-    camera_frame: usb_cam
-    publish_tf: true
-    base_to_imu_translation: [0.06, 0.0, 0.095]
-    base_to_imu_quaternion_xyzw: [0.0, 0.0, 0.0, 1.0]
-    base_to_camera_translation: [0.27, 0.0, 0.135]
-    base_to_camera_quaternion_xyzw: [-0.5, 0.5, -0.5, 0.5]
+    imu_topic: /imu                                        # IMU 입력 토픽
+    board_pose_topic: /localization/aruco/board_pose       # detector raw pose 입력 토픽
+
+    odom_topic: /localization/relative/odom                # board 기준 filtered odom 출력
+    pose_topic: /localization/relative/pose                # board 기준 filtered pose 출력
+    leader_rear_odom_topic: /localization/leader_rear/odom # leader_rear 기준 filtered odom 출력
+    leader_rear_pose_topic: /localization/leader_rear/pose # leader_rear 기준 filtered pose 출력
+    publish_tf: true                                       # leader_rear -> base_link TF 출력 여부
+
+    board_frame: board                                     # 기하학용 board 프레임 이름
+    leader_rear_frame: leader_rear                         # 제어용 leader rear 프레임 이름
+    base_frame: base_link                                  # 차량 바디 프레임 이름
+    camera_frame: usb_cam                                  # 카메라 프레임 이름
+
+    base_to_imu_translation: [0.06, 0.0, 0.095]           # base_link -> IMU 평행이동 [m]
+    base_to_imu_quaternion_xyzw: [0.0, 0.0, 0.0, 1.0]     # base_link -> IMU 회전 [xyzw]
+    base_to_camera_translation: [0.27, 0.0, 0.135]        # base_link -> camera 평행이동 [m]
+    base_to_camera_quaternion_xyzw: [-0.5, 0.5, -0.5, 0.5]  # base_link -> camera 회전 [xyzw]
+
+    output_rate_hz: 100.0                                  # 최종 pose/odom publish 주파수 [Hz]
+    reset_timeout_sec: 1.0                                 # vision 끊김 후 재초기화 기준 시간 [s]
+    vision_delay_buffer_sec: 0.75                          # 지연된 vision 측정 replay 버퍼 길이 [s]
+    vision_rotation_gate_deg: 35.0                         # vision 회전 residual gate [deg]
+
+    velocity_damping_per_sec: 1.5                          # CV 모델 속도 감쇠율 [1/s]
+    position_process_noise_std_mps2: 0.30                 # 위치/속도 process noise 표준편차
+    gyro_noise_std_radps: 0.05                             # 자이로 측정 잡음 표준편차 [rad/s]
+    gyro_bias_random_walk_std_radps2: 0.01                 # 자이로 바이어스 random walk [rad/s^2]
+
+    gyro_bias_bootstrap_sec: 0.40                          # 초기 바이어스 추정에 사용할 IMU 구간 [s]
+    gyro_bias_bootstrap_max_std_radps: 0.15                # 정지로 간주할 최대 자이로 표준편차 [rad/s]
+    initial_position_std_m: 0.20                           # 필터 초기 위치 표준편차 [m]
+    initial_velocity_std_mps: 0.75                         # 필터 초기 속도 표준편차 [m/s]
+    initial_orientation_std_deg: 20.0                      # 필터 초기 자세 표준편차 [deg]
+    initial_gyro_bias_std_radps: 0.15                      # 필터 초기 자이로 바이어스 표준편차 [rad/s]
 
 pose_rviz_marker_node:
   ros__parameters:
-    odom_topic: /localization/leader_rear/odom
-    marker_topic: /localization/relative/pose_markers
-    marker_namespace: relative_pose_viz
-    axis_line_width: 0.01
-    text_size: 0.08
-    vehicle_arrow_length: 0.22
-    vehicle_arrow_width: 0.05
-    good_cov_trace: 0.02
-    warn_cov_trace: 0.12
+    odom_topic: /localization/leader_rear/odom             # 시각화에 사용할 기준 odom 입력
+    marker_topic: /localization/relative/pose_markers      # RViz MarkerArray 출력
+    marker_namespace: relative_pose_viz                    # marker namespace
+
+    axis_line_width: 0.01                                  # xyz 축 선 두께
+    text_size: 0.08                                        # 텍스트 marker 크기
+    vehicle_arrow_length: 0.22                             # 차량 화살표 길이
+    vehicle_arrow_width: 0.05                              # 차량 화살표 너비
+
+    good_cov_trace: 0.02                                   # 낮은 covariance 구간 임계값
+    warn_cov_trace: 0.12                                   # 경고 covariance 구간 임계값
