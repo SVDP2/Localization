@@ -21,7 +21,7 @@ TRANSFORMS = (
         'parent': 'base_link',
         'child': 'base_imu_link',
         'translation': (0.060, 0.0, 0.150 - WHEEL_RADIUS_M),
-        'quaternion': (0.0, 0.0, 0.0, 1.0),
+        'quaternion': (1.0, 0.0, 0.0, 0.0),
     },
     {
         'name': 'base_link_to_usb_cam_static_tf',
