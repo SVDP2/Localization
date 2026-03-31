@@ -28,7 +28,10 @@ aruco_imu_eskf_localization_node:
     board_pose_topic: /localization/aruco/board_pose
     odom_topic: /localization/relative/odom
     pose_topic: /localization/relative/pose
+    leader_rear_odom_topic: /localization/leader_rear/odom
+    leader_rear_pose_topic: /localization/leader_rear/pose
     board_frame: board
+    leader_rear_frame: leader_rear
     base_frame: base_link
     camera_frame: usb_cam
     publish_tf: true
