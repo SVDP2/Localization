@@ -18,17 +18,19 @@
 - 용도: 제어와 디버깅용 기준 프레임
 - 원점: `board`와 동일
 - 축:
-  - `+x`: follower 방향, 즉 차간거리 축
-  - `+y`: leader 좌측, 즉 횡오프셋 축
+  - `+x`: leader vehicle forward
+  - `+y`: leader vehicle left
   - `+z`: 위쪽
 
 고정 회전 관계는 아래와 같다.
 
 ```text
-x_leader_rear =  z_board
+x_leader_rear = -z_board
 y_leader_rear = -x_board
 z_leader_rear =  y_board
 ```
+
+이 변환은 오른손 좌표계여야 하므로, 구현과 테스트에서 `det(R)=+1`을 반드시 확인한다.
 
 ## 2. Pose Estimation Rules
 
@@ -43,6 +45,7 @@ z_leader_rear =  y_board
 - 반드시 `solvePnPGeneric(..., SOLVEPNP_IPPE_SQUARE)`를 사용한다.
 - 나온 후보 해를 그대로 쓰지 않고 모두 `board -> camera` pose로 환산한다.
 - prior가 없으면 1-marker initialization은 하지 않는다.
+- prior가 stale이면 1-marker fallback을 금지하고, 다시 2-marker 이상으로만 reinitialize한다.
 
 ### Candidate Gates
 후보 해는 아래 순서대로 통과해야 한다.
@@ -51,16 +54,17 @@ z_leader_rear =  y_board
    - `z_B > 0.05 m`
 2. view-angle gate
    - `acos(z_B / ||p_B||) <= 75 deg`
-3. feasible box gate in `leader_rear`
-   - `0.10 <= x <= 3.50`
+3. feasible box gate in `leader_rear`, evaluated on `board -> base_link`
+   - `-3.50 <= x <= -0.10`
    - `|y| <= 1.00`
    - `-0.50 <= z <= 0.80`
 4. temporal gate
    - `Δposition <= 0.35 m`
    - `Δrotation <= 55 deg`
-   - `Δyaw <= 40 deg`
+   - `Δheading <= 40 deg`
 
 남은 후보 중 최종 선택은 reprojection RMSE와 prior 차이를 합친 점수의 최소값으로 한다.
+single-marker 후보 두 개의 점수 차가 너무 작으면 update를 버린다.
 
 ## 3. ROS Output Contract
 
@@ -71,6 +75,7 @@ z_leader_rear =  y_board
   - optional TF `board -> camera`
 
 detector는 여전히 `board` 기준 측정치를 publish한다.
+detector는 `base_to_camera` extrinsic을 알고 있으며, feasible box와 heading gate는 `board -> base_link` 기준으로 계산한다.
 
 ### Localization
 - detector의 `board -> camera`를 받아 `board -> base_link`와 `leader_rear -> base_link`를 모두 계산한다.
@@ -89,13 +94,12 @@ detector는 여전히 `board` 기준 측정치를 publish한다.
 
 따라서 marker 텍스트는 아래 의미로 읽는다.
 
-- `gap x`: follower와 leader rear 사이 거리
-- `lateral y`: follower의 좌우 오프셋
-- `height z`: 높이 차
+- `x/y/z`: `leader_rear` 기준 follower 위치
 - `roll/pitch/yaw`: `leader_rear` 기준 follower 자세
 
 ## 5. Current Scope
 
 - 현재 단계는 detector-first 안정화가 목표다.
+- 이번 단계의 핵심은 proper frame, base 기준 gate, stale prior timeout, 1-marker ambiguity reject다.
 - IMU 융합과 100 Hz extrapolated output은 다음 단계 과제다.
 - hardware board는 기존 평면 3-marker를 유지한다.

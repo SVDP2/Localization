@@ -19,10 +19,45 @@ from tf2_ros import TransformBroadcaster
 from aruco_imu_eskf_localization.board_pose_estimator import (
     BoardDefinition,
     BoardPoseEstimate,
+    board_pose_to_leader_rear_transform,
+    pose_to_matrix,
 )
+from aruco_imu_eskf_localization.frame_conventions import transform_leader_rear_from_board
 
 
 PACKAGE_NAME = 'aruco_imu_eskf_localization'
+
+
+def _stamp_to_nanoseconds(stamp) -> int:
+    return int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
+
+
+def pose_prior_is_fresh(
+    previous_stamp_ns: int | None,
+    current_stamp_ns: int,
+    timeout_sec: float,
+) -> bool:
+    if previous_stamp_ns is None:
+        return False
+    return (current_stamp_ns - previous_stamp_ns) <= int(float(timeout_sec) * 1_000_000_000)
+
+
+def _transform_matrix(translation, quat_xyzw):
+    transform = np.eye(4, dtype=float)
+    transform[:3, :3] = Rotation.from_quat(quat_xyzw).as_matrix()
+    transform[:3, 3] = np.asarray(translation, dtype=float).reshape(3)
+    return transform
+
+
+def _corner_refinement_method(name: str) -> int:
+    normalized = str(name).strip().upper()
+    mapping = {
+        'NONE': getattr(cv2.aruco, 'CORNER_REFINE_NONE', 0),
+        'SUBPIX': getattr(cv2.aruco, 'CORNER_REFINE_SUBPIX', 1),
+        'CONTOUR': getattr(cv2.aruco, 'CORNER_REFINE_CONTOUR', 2),
+        'APRILTAG': getattr(cv2.aruco, 'CORNER_REFINE_APRILTAG', 3),
+    }
+    return int(mapping.get(normalized, mapping['SUBPIX']))
 
 
 class ArucoDetectorNode(Node):
@@ -38,19 +73,30 @@ class ArucoDetectorNode(Node):
         self.declare_parameter('board_pose_topic', '/localization/aruco/board_pose')
         self.declare_parameter('debug_image_topic', '/localization/aruco/debug_image')
         self.declare_parameter('publish_tf', True)
+        self.declare_parameter('corner_refinement_method', 'SUBPIX')
+        self.declare_parameter('enable_detected_marker_refinement', True)
         self.declare_parameter('min_markers_for_board', 1)
         self.declare_parameter('min_markers_to_initialize', 2)
         self.declare_parameter('max_position_jump_m', 0.35)
         self.declare_parameter('max_rotation_jump_deg', 55.0)
         self.declare_parameter('max_yaw_jump_deg', 40.0)
+        self.declare_parameter('max_heading_jump_deg', 40.0)
         self.declare_parameter('max_reprojection_rmse_px', 6.0)
         self.declare_parameter('front_halfspace_min_z_m', 0.05)
         self.declare_parameter('max_view_angle_deg', 75.0)
-        self.declare_parameter('feasible_x_min_m', 0.10)
-        self.declare_parameter('feasible_x_max_m', 3.50)
+        self.declare_parameter('feasible_x_min_m', -3.50)
+        self.declare_parameter('feasible_x_max_m', -0.10)
         self.declare_parameter('feasible_abs_y_max_m', 1.00)
         self.declare_parameter('feasible_z_min_m', -0.50)
         self.declare_parameter('feasible_z_max_m', 0.80)
+        self.declare_parameter('single_marker_prior_timeout_sec', 0.25)
+        self.declare_parameter('single_marker_min_score_margin', 0.25)
+        self.declare_parameter('pose_refinement_method', 'lm')
+        self.declare_parameter('base_to_camera_translation', [0.27, 0.0, 0.135])
+        self.declare_parameter(
+            'base_to_camera_quaternion_xyzw',
+            [-0.5, 0.5, -0.5, 0.5],
+        )
 
         marker_config_file = self.get_parameter('marker_config_file').value
         aruco_dict_name = self.get_parameter('aruco_dict').value
@@ -61,6 +107,10 @@ class ArucoDetectorNode(Node):
         board_pose_topic = self.get_parameter('board_pose_topic').value
         debug_image_topic = self.get_parameter('debug_image_topic').value
         self.publish_tf = bool(self.get_parameter('publish_tf').value)
+        corner_refinement = self.get_parameter('corner_refinement_method').value
+        self.enable_detected_marker_refinement = bool(
+            self.get_parameter('enable_detected_marker_refinement').value
+        )
         self.min_markers_for_board = int(self.get_parameter('min_markers_for_board').value)
         self.min_markers_to_initialize = int(
             self.get_parameter('min_markers_to_initialize').value
@@ -68,6 +118,9 @@ class ArucoDetectorNode(Node):
         self.max_position_jump_m = float(self.get_parameter('max_position_jump_m').value)
         self.max_rotation_jump_deg = float(self.get_parameter('max_rotation_jump_deg').value)
         self.max_yaw_jump_deg = float(self.get_parameter('max_yaw_jump_deg').value)
+        self.max_heading_jump_deg = float(
+            self.get_parameter('max_heading_jump_deg').value
+        )
         self.max_reprojection_rmse_px = float(
             self.get_parameter('max_reprojection_rmse_px').value
         )
@@ -82,6 +135,21 @@ class ArucoDetectorNode(Node):
         )
         self.feasible_z_min_m = float(self.get_parameter('feasible_z_min_m').value)
         self.feasible_z_max_m = float(self.get_parameter('feasible_z_max_m').value)
+        self.single_marker_prior_timeout_sec = float(
+            self.get_parameter('single_marker_prior_timeout_sec').value
+        )
+        self.single_marker_min_score_margin = float(
+            self.get_parameter('single_marker_min_score_margin').value
+        )
+        self.pose_refinement_method = str(
+            self.get_parameter('pose_refinement_method').value
+        )
+        self._base_to_camera = _transform_matrix(
+            self.get_parameter('base_to_camera_translation').value,
+            self.get_parameter('base_to_camera_quaternion_xyzw').value,
+        )
+        self._camera_to_base = np.linalg.inv(self._base_to_camera)
+        self._leader_rear_from_board = transform_leader_rear_from_board()
 
         self.bridge = CvBridge()
         self.board_definition = self._load_board_config(marker_config_file)
@@ -92,7 +160,9 @@ class ArucoDetectorNode(Node):
         aruco_dict_id = getattr(cv2.aruco, aruco_dict_name)
         self.aruco_dict = cv2.aruco.getPredefinedDictionary(aruco_dict_id)
         self.aruco_params = cv2.aruco.DetectorParameters()
+        self.aruco_params.cornerRefinementMethod = _corner_refinement_method(corner_refinement)
         self.detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
+        self._aruco_board = self.board_definition.as_aruco_board(self.aruco_dict)
 
         self.tf_broadcaster = TransformBroadcaster(self) if self.publish_tf else None
         self.create_subscription(Image, image_topic, self.image_callback, 10)
@@ -101,6 +171,7 @@ class ArucoDetectorNode(Node):
         self.board_pose_pub = self.create_publisher(PoseWithCovarianceStamped, board_pose_topic, 10)
 
         self._last_board_pose: tuple[np.ndarray, np.ndarray] | None = None
+        self._last_board_pose_stamp_ns: int | None = None
 
         self.get_logger().info(f'aruco dict: {aruco_dict_name}')
         self.get_logger().info(f'image topic: {image_topic}')
@@ -148,23 +219,46 @@ class ArucoDetectorNode(Node):
             cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
             debug_image = cv_image.copy()
             gray = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
-            corners, ids, _ = self.detector.detectMarkers(gray)
+            corners, ids, rejected = self.detector.detectMarkers(gray)
+
+            if self.enable_detected_marker_refinement and ids is not None and len(ids) > 0:
+                corners, ids, rejected, _ = self.detector.refineDetectedMarkers(
+                    gray,
+                    self._aruco_board,
+                    corners,
+                    ids,
+                    rejected,
+                    self.camera_matrix,
+                    self.dist_coeffs,
+                )
 
             if ids is None or len(ids) == 0:
                 self._draw_status_overlay(debug_image, 'no markers')
                 self._publish_debug_image(debug_image, msg)
                 return
 
+            current_stamp_ns = _stamp_to_nanoseconds(msg.header.stamp)
+            previous_board_pose = (
+                self._last_board_pose
+                if pose_prior_is_fresh(
+                    self._last_board_pose_stamp_ns,
+                    current_stamp_ns,
+                    self.single_marker_prior_timeout_sec,
+                )
+                else None
+            )
             estimate = self.board_definition.estimate_pose(
                 corners,
                 ids,
                 self.camera_matrix,
                 self.dist_coeffs,
-                previous_board_pose=self._last_board_pose,
+                previous_board_pose=previous_board_pose,
+                camera_to_base=self._camera_to_base,
                 min_markers=self.min_markers_for_board,
                 min_markers_to_initialize=self.min_markers_to_initialize,
                 max_position_jump_m=self.max_position_jump_m,
                 max_rotation_jump_deg=self.max_rotation_jump_deg,
+                max_heading_jump_deg=self.max_heading_jump_deg,
                 max_yaw_jump_deg=self.max_yaw_jump_deg,
                 front_halfspace_min_z_m=self.front_halfspace_min_z_m,
                 max_view_angle_deg=self.max_view_angle_deg,
@@ -173,10 +267,13 @@ class ArucoDetectorNode(Node):
                 feasible_abs_y_max_m=self.feasible_abs_y_max_m,
                 feasible_z_min_m=self.feasible_z_min_m,
                 feasible_z_max_m=self.feasible_z_max_m,
+                single_marker_min_score_margin=self.single_marker_min_score_margin,
+                pose_refinement_method=self.pose_refinement_method,
             )
 
             if estimate is not None and estimate.reprojection_rmse_px <= self.max_reprojection_rmse_px:
                 self._last_board_pose = estimate.board_pose
+                self._last_board_pose_stamp_ns = current_stamp_ns
                 if self.tf_broadcaster is not None:
                     self._publish_camera_tf(estimate, msg.header.stamp)
                 self._publish_board_pose(estimate, msg.header.stamp)
@@ -271,13 +368,17 @@ class ArucoDetectorNode(Node):
 
     def _draw_estimate_overlay(self, image, estimate: BoardPoseEstimate) -> None:
         board_rvec, board_tvec = estimate.board_pose
-        rotation = Rotation.from_rotvec(board_rvec)
+        board_to_camera = pose_to_matrix(board_rvec, board_tvec)
+        board_to_base = board_to_camera @ self._camera_to_base
+        leader_rear_to_base = self._leader_rear_from_board @ board_to_base
+        leader_position = leader_rear_to_base[:3, 3]
+        rotation = Rotation.from_matrix(leader_rear_to_base[:3, :3])
         yaw_deg, pitch_deg, roll_deg = rotation.as_euler('ZYX', degrees=True)
         mode = 'single-marker' if estimate.used_single_marker_fallback else 'multi-marker'
         status = (
             f'{mode} | markers={estimate.visible_markers} '
-            f'| x={board_tvec[0]:+.2f} y={board_tvec[1]:+.2f} z={board_tvec[2]:+.2f} '
-            f'| yaw={yaw_deg:+.1f} pitch={pitch_deg:+.1f} roll={roll_deg:+.1f} '
+            f'| lx={leader_position[0]:+.2f} ly={leader_position[1]:+.2f} lz={leader_position[2]:+.2f} '
+            f'| heading={yaw_deg:+.1f} pitch={pitch_deg:+.1f} roll={roll_deg:+.1f} '
             f'| rmse={estimate.reprojection_rmse_px:.2f}px'
         )
         self._draw_status_overlay(image, status, color=(40, 220, 40))

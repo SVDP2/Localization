@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 
 def rotation_leader_rear_from_board() -> np.ndarray:
-    """Return the fixed rotation that maps board-frame vectors into leader_rear."""
+    """Return the proper rotation that maps board-frame vectors into leader_rear."""
     return np.array(
         [
-            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
             [-1.0, 0.0, 0.0],
             [0.0, 1.0, 0.0],
         ],
@@ -33,3 +34,8 @@ def transform_board_from_leader_rear() -> np.ndarray:
 
 def vector_leader_rear_from_board(vector_in_board) -> np.ndarray:
     return rotation_leader_rear_from_board() @ np.asarray(vector_in_board, dtype=float).reshape(3)
+
+
+def heading_deg_from_leader_rear_pose(transform_leader_rear_to_base: np.ndarray) -> float:
+    rotation = Rotation.from_matrix(np.asarray(transform_leader_rear_to_base, dtype=float)[:3, :3])
+    return float(rotation.as_euler('ZYX', degrees=True)[0])

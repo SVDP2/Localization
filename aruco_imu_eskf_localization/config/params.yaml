@@ -8,19 +8,27 @@ aruco_detector_node:
     image_topic: /image_raw
     board_pose_topic: /localization/aruco/board_pose
     publish_tf: true
+    corner_refinement_method: SUBPIX
+    enable_detected_marker_refinement: true
     min_markers_for_board: 1
     min_markers_to_initialize: 2
     max_position_jump_m: 0.35
     max_rotation_jump_deg: 55.0
     max_yaw_jump_deg: 40.0
+    max_heading_jump_deg: 40.0
     max_reprojection_rmse_px: 6.0
     front_halfspace_min_z_m: 0.05
     max_view_angle_deg: 75.0
-    feasible_x_min_m: 0.10
-    feasible_x_max_m: 3.50
+    feasible_x_min_m: -3.50
+    feasible_x_max_m: -0.10
     feasible_abs_y_max_m: 1.00
     feasible_z_min_m: -0.50
     feasible_z_max_m: 0.80
+    single_marker_prior_timeout_sec: 0.25
+    single_marker_min_score_margin: 0.25
+    pose_refinement_method: lm
+    base_to_camera_translation: [0.27, 0.0, 0.135]
+    base_to_camera_quaternion_xyzw: [-0.5, 0.5, -0.5, 0.5]
     debug_image_topic: /localization/aruco/debug_image
 
 aruco_imu_eskf_localization_node:
