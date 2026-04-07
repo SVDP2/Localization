@@ -392,12 +392,12 @@ class ArucoDetectorNode(Node):
 
     def _camera_transforms_from_tf(self) -> tuple[np.ndarray, np.ndarray] | None:
         if (
-            self._cached_camera_to_base_tf is not None
-            and self._cached_base_to_camera_tf is not None
+            self._cached_base_to_camera_tf is not None
+            and self._cached_camera_to_base_tf is not None
         ):
             return (
-                self._cached_camera_to_base_tf,
                 self._cached_base_to_camera_tf,
+                self._cached_camera_to_base_tf,
             )
 
         try:
@@ -421,9 +421,9 @@ class ArucoDetectorNode(Node):
             ],
             dtype=float,
         )
-        camera_to_base = np.eye(4, dtype=float)
-        camera_to_base[:3, :3] = Rotation.from_quat(quat).as_matrix()
-        camera_to_base[:3, 3] = np.array(
+        base_to_camera = np.eye(4, dtype=float)
+        base_to_camera[:3, :3] = Rotation.from_quat(quat).as_matrix()
+        base_to_camera[:3, 3] = np.array(
             [
                 tf_msg.transform.translation.x,
                 tf_msg.transform.translation.y,
@@ -431,9 +431,9 @@ class ArucoDetectorNode(Node):
             ],
             dtype=float,
         )
-        base_to_camera = np.linalg.inv(camera_to_base)
-        self._cached_camera_to_base_tf = camera_to_base
+        camera_to_base = np.linalg.inv(base_to_camera)
         self._cached_base_to_camera_tf = base_to_camera
+        self._cached_camera_to_base_tf = camera_to_base
         return camera_to_base, base_to_camera
 
     def _pose_prior_callback(self, msg: PoseWithCovarianceStamped) -> None:
@@ -505,7 +505,7 @@ class ArucoDetectorNode(Node):
                 self._draw_status_overlay(debug_image, 'missing camera tf')
                 self._publish_debug_image(debug_image, msg)
                 return
-            camera_to_base, base_to_camera = camera_transforms
+            base_to_camera, camera_to_base = camera_transforms
 
             current_stamp_ns = _stamp_to_nanoseconds(msg.header.stamp)
             prior_board_to_base = select_latest_pose_prior(
@@ -649,7 +649,7 @@ class ArucoDetectorNode(Node):
         if camera_transforms is None:
             self._draw_status_overlay(image, 'missing camera tf')
             return
-        camera_to_base, _ = camera_transforms
+        _, camera_to_base = camera_transforms
         board_rvec, board_tvec = estimate.board_pose
         board_to_camera = pose_to_matrix(board_rvec, board_tvec)
         board_to_base = board_to_camera @ camera_to_base

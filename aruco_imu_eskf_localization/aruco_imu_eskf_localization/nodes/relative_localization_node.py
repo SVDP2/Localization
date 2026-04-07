@@ -76,7 +76,7 @@ class RelativeLocalizationNode(Node):
         self.declare_parameter('publish_tf', True)
         self.declare_parameter('output_rate_hz', 100.0)
         self.declare_parameter('reset_timeout_sec', 1.0)
-        self.declare_parameter('vision_delay_buffer_sec', 0.75)
+        self.declare_parameter('vision_delay_buffer_sec', 2.0)
         self.declare_parameter('vision_rotation_gate_deg', 10.0)
         self.declare_parameter('velocity_damping_per_sec', 1.5)
         self.declare_parameter('position_process_noise_std_mps2', 0.3)
@@ -314,9 +314,9 @@ class RelativeLocalizationNode(Node):
             ],
             dtype=float,
         )
-        camera_to_base = np.eye(4, dtype=float)
-        camera_to_base[:3, :3] = Rotation.from_quat(quat).as_matrix()
-        camera_to_base[:3, 3] = np.array(
+        base_to_camera = np.eye(4, dtype=float)
+        base_to_camera[:3, :3] = Rotation.from_quat(quat).as_matrix()
+        base_to_camera[:3, 3] = np.array(
             [
                 tf_msg.transform.translation.x,
                 tf_msg.transform.translation.y,
@@ -324,6 +324,7 @@ class RelativeLocalizationNode(Node):
             ],
             dtype=float,
         )
+        camera_to_base = np.linalg.inv(base_to_camera)
         self._cached_camera_to_base_tf = camera_to_base
         return camera_to_base
 

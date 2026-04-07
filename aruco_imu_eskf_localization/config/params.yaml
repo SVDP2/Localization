@@ -62,7 +62,7 @@ aruco_imu_eskf_localization_node:
 
     output_rate_hz: 100.0                                  # 최종 pose/odom publish 주파수 [Hz]
     reset_timeout_sec: 1.0                                 # vision 끊김 후 재초기화 기준 시간 [s]
-    vision_delay_buffer_sec: 0.75                          # 지연된 vision 측정 replay 버퍼 길이 [s]
+    vision_delay_buffer_sec: 2.0                           # 지연된 vision 측정 replay 버퍼 길이 [s]
     vision_rotation_gate_deg: 10.0                         # gate 초과 시 vision pose 전체 reject [deg]
 
     velocity_damping_per_sec: 1.5                          # CV 모델 속도 감쇠율 [1/s]
