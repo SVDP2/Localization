@@ -88,7 +88,7 @@ class RelativeLocalizationNode(Node):
         self.declare_parameter('initial_velocity_std_mps', 0.75)
         self.declare_parameter('initial_orientation_std_deg', 20.0)
         self.declare_parameter('initial_gyro_bias_std_radps', 0.15)
-        self.declare_parameter('base_to_camera_translation', [0.0, 0.0, 0.0])
+        self.declare_parameter('base_to_camera_translation', [0.27, 0.0, 0.135])
         self.declare_parameter(
             'base_to_camera_quaternion_xyzw',
             [-0.5, 0.5, -0.5, 0.5],
@@ -365,7 +365,7 @@ class RelativeLocalizationNode(Node):
             self._record_snapshot()
 
         self._last_vision_stamp_ns = stamp_ns
-        self._maybe_log_rotation_skip(update_result.rotation_innovation_deg, update_result.used_rotation_update)
+        self._maybe_log_pose_rejection(update_result)
         self._prune_history(max(stamp_ns, self._filter.stamp_ns or stamp_ns))
 
     def _leader_measurement_from_board_msg(
@@ -489,8 +489,8 @@ class RelativeLocalizationNode(Node):
         while self._state_history and (self._state_history[0].stamp_ns or 0) < keep_after_ns:
             self._state_history.popleft()
 
-    def _maybe_log_rotation_skip(self, rotation_innovation_deg: float, used_rotation_update: bool) -> None:
-        if used_rotation_update:
+    def _maybe_log_pose_rejection(self, update_result) -> None:
+        if update_result.accepted_pose_update:
             return
 
         now_ns = self.get_clock().now().nanoseconds
@@ -501,7 +501,8 @@ class RelativeLocalizationNode(Node):
             return
 
         self.get_logger().warn(
-            f'skipped vision rotation update; innovation {rotation_innovation_deg:.1f} deg exceeded '
+            f'rejected vision pose update; rotation innovation '
+            f'{update_result.rotation_innovation_deg:.1f} deg exceeded '
             f'gate {self._vision_rotation_gate_deg:.1f} deg'
         )
         self._last_rotation_skip_log_ns = now_ns

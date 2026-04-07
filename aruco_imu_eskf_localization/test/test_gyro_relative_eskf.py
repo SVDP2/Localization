@@ -43,7 +43,7 @@ class TestGyroRelativeEskf(unittest.TestCase):
 
         self.assertAlmostEqual(yaw_deg, np.degrees(0.2), delta=0.75)
 
-    def test_update_pose_skips_rotation_when_gate_is_exceeded(self):
+    def test_update_pose_rejects_full_pose_when_gate_is_exceeded(self):
         filter_core = GyroRelativeEskf()
         filter_core.initialize(
             stamp_ns=0,
@@ -63,8 +63,9 @@ class TestGyroRelativeEskf(unittest.TestCase):
             degrees=True,
         )[0]
 
+        self.assertFalse(result.accepted_pose_update)
         self.assertFalse(result.used_rotation_update)
-        self.assertGreater(filter_core.pose_matrix()[0, 3], 0.49)
+        self.assertLess(abs(filter_core.pose_matrix()[0, 3]), 1.0e-9)
         self.assertAlmostEqual(yaw_deg, 0.0, delta=1.0)
 
     def test_pose_update_can_correct_gyro_bias(self):
@@ -86,6 +87,7 @@ class TestGyroRelativeEskf(unittest.TestCase):
         )
         snapshot = filter_core.snapshot()
 
+        self.assertTrue(result.accepted_pose_update)
         self.assertTrue(result.used_rotation_update)
         self.assertGreater(snapshot.gyro_bias_radps[2], 0.01)
 

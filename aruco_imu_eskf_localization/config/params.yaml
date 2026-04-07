@@ -18,9 +18,10 @@ aruco_detector_node:
     enable_detected_marker_refinement: true                # board 기반 누락 마커 재탐색 사용 여부
     pose_refinement_method: lm                             # solvePnP 이후 pose refinement 방식
 
-    min_markers_for_board: 1                               # pose 계산을 시도할 최소 마커 수
+    min_markers_for_board: 2                               # 기본값은 2개 이상 마커만 허용해 single-marker fallback 비활성
     min_markers_to_initialize: 2                           # prior 없이 초기화할 최소 마커 수
     single_marker_prior_timeout_sec: 0.25                  # single-marker fallback prior 유효 시간 [s]
+    motion_gate_prior_timeout_sec: 1.0                     # multi-marker temporal gate에 사용할 prior 유효 시간 [s]
     single_marker_min_score_margin: 0.25                   # single-marker 후보 점수 차 최소값
 
     max_position_jump_m: 0.35                              # 연속 프레임 최대 위치 점프 허용치 [m]
@@ -61,7 +62,7 @@ aruco_imu_eskf_localization_node:
     output_rate_hz: 100.0                                  # 최종 pose/odom publish 주파수 [Hz]
     reset_timeout_sec: 1.0                                 # vision 끊김 후 재초기화 기준 시간 [s]
     vision_delay_buffer_sec: 0.75                          # 지연된 vision 측정 replay 버퍼 길이 [s]
-    vision_rotation_gate_deg: 35.0                         # vision 회전 residual gate [deg]
+    vision_rotation_gate_deg: 10.0                         # gate 초과 시 vision pose 전체 reject [deg]
 
     velocity_damping_per_sec: 1.5                          # CV 모델 속도 감쇠율 [1/s]
     position_process_noise_std_mps2: 0.30                 # 위치/속도 process noise 표준편차

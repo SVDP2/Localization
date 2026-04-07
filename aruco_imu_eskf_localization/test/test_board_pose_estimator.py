@@ -246,6 +246,38 @@ class TestBoardPoseEstimator(unittest.TestCase):
 
         self.assertIsNone(estimate)
 
+    def test_multi_marker_motion_gate_timeout_is_decoupled_from_single_marker_prior(self):
+        board = _make_board_definition()
+        true_rvec, true_tvec = _true_observation()
+        corners = np.concatenate(
+            [
+                _project_marker(board, 0, true_rvec, true_tvec),
+                _project_marker(board, 2, true_rvec, true_tvec),
+            ],
+            axis=0,
+        )
+        ids = np.array([[0], [2]], dtype=np.int32)
+        stale_single_marker_prior = (
+            np.zeros(3, dtype=float),
+            np.array([0.0, 0.0, -2.0], dtype=float),
+        )
+
+        estimate = board.estimate_pose(
+            corners,
+            ids,
+            _camera_matrix(),
+            np.zeros(5, dtype=np.float64),
+            previous_board_pose=None,
+            single_marker_previous_board_pose=stale_single_marker_prior,
+            motion_gate_previous_board_pose=None,
+            min_markers=1,
+            min_markers_to_initialize=2,
+            max_position_jump_m=0.05,
+        )
+
+        self.assertIsNotNone(estimate)
+        self.assertEqual(2, estimate.visible_markers)
+
 
 if __name__ == '__main__':
     unittest.main()

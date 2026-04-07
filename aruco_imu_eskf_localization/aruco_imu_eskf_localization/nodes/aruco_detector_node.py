@@ -60,6 +60,67 @@ def _corner_refinement_method(name: str) -> int:
     return int(mapping.get(normalized, mapping['SUBPIX']))
 
 
+def measurement_covariance_from_estimate(estimate: BoardPoseEstimate) -> np.ndarray:
+    if estimate.visible_markers >= 3:
+        base_lateral_std = 0.015
+        base_vertical_std = 0.020
+        base_depth_std = 0.040
+        base_roll_std = np.deg2rad(8.0)
+        base_pitch_std = np.deg2rad(8.0)
+        base_yaw_std = np.deg2rad(5.0)
+    elif estimate.visible_markers == 2:
+        base_lateral_std = 0.030
+        base_vertical_std = 0.040
+        base_depth_std = 0.080
+        base_roll_std = np.deg2rad(12.0)
+        base_pitch_std = np.deg2rad(12.0)
+        base_yaw_std = np.deg2rad(8.0)
+    else:
+        base_lateral_std = 0.070
+        base_vertical_std = 0.090
+        base_depth_std = 0.180
+        base_roll_std = np.deg2rad(22.0)
+        base_pitch_std = np.deg2rad(22.0)
+        base_yaw_std = np.deg2rad(14.0)
+
+    reprojection_scale = float(
+        np.clip(1.0 + 0.4 * max(estimate.reprojection_rmse_px - 0.5, 0.0), 1.0, 4.0)
+    )
+    area_scale = float(np.clip(np.sqrt(16000.0 / max(estimate.image_area_px, 1.0)), 1.0, 4.0))
+    _, board_tvec = estimate.board_pose
+    distance_m = float(np.linalg.norm(board_tvec))
+    cosine_view = float(
+        np.clip(board_tvec[2] / max(distance_m, 1.0e-6), -1.0, 1.0)
+    )
+    view_angle_deg = float(np.degrees(np.arccos(cosine_view)))
+    translation_view_scale = float(
+        np.clip(1.0 + max(view_angle_deg - 55.0, 0.0) / 50.0, 1.0, 2.5)
+    )
+    rotation_view_scale = float(
+        np.clip(1.0 + max(view_angle_deg - 25.0, 0.0) / 20.0, 1.0, 4.0)
+    )
+    fallback_rotation_scale = 2.0 if estimate.used_single_marker_fallback else 1.0
+    fallback_translation_scale = 1.6 if estimate.used_single_marker_fallback else 1.0
+    translation_scale = (
+        reprojection_scale * area_scale * translation_view_scale * fallback_translation_scale
+    )
+    rotation_scale = (
+        reprojection_scale
+        * area_scale
+        * rotation_view_scale
+        * fallback_rotation_scale
+    )
+
+    covariance = np.zeros((6, 6), dtype=float)
+    covariance[0, 0] = (base_lateral_std * translation_scale) ** 2
+    covariance[1, 1] = (base_vertical_std * translation_scale) ** 2
+    covariance[2, 2] = (base_depth_std * translation_scale) ** 2
+    covariance[3, 3] = (base_roll_std * rotation_scale) ** 2
+    covariance[4, 4] = (base_pitch_std * rotation_scale) ** 2
+    covariance[5, 5] = (base_yaw_std * rotation_scale) ** 2
+    return covariance
+
+
 class ArucoDetectorNode(Node):
     def __init__(self) -> None:
         super().__init__('aruco_detector_node')
@@ -75,7 +136,7 @@ class ArucoDetectorNode(Node):
         self.declare_parameter('publish_tf', True)
         self.declare_parameter('corner_refinement_method', 'SUBPIX')
         self.declare_parameter('enable_detected_marker_refinement', True)
-        self.declare_parameter('min_markers_for_board', 1)
+        self.declare_parameter('min_markers_for_board', 2)
         self.declare_parameter('min_markers_to_initialize', 2)
         self.declare_parameter('max_position_jump_m', 0.35)
         self.declare_parameter('max_rotation_jump_deg', 55.0)
@@ -90,6 +151,7 @@ class ArucoDetectorNode(Node):
         self.declare_parameter('feasible_z_min_m', -0.50)
         self.declare_parameter('feasible_z_max_m', 0.80)
         self.declare_parameter('single_marker_prior_timeout_sec', 0.25)
+        self.declare_parameter('motion_gate_prior_timeout_sec', 1.0)
         self.declare_parameter('single_marker_min_score_margin', 0.25)
         self.declare_parameter('pose_refinement_method', 'lm')
         self.declare_parameter('base_to_camera_translation', [0.27, 0.0, 0.135])
@@ -137,6 +199,9 @@ class ArucoDetectorNode(Node):
         self.feasible_z_max_m = float(self.get_parameter('feasible_z_max_m').value)
         self.single_marker_prior_timeout_sec = float(
             self.get_parameter('single_marker_prior_timeout_sec').value
+        )
+        self.motion_gate_prior_timeout_sec = float(
+            self.get_parameter('motion_gate_prior_timeout_sec').value
         )
         self.single_marker_min_score_margin = float(
             self.get_parameter('single_marker_min_score_margin').value
@@ -238,7 +303,7 @@ class ArucoDetectorNode(Node):
                 return
 
             current_stamp_ns = _stamp_to_nanoseconds(msg.header.stamp)
-            previous_board_pose = (
+            single_marker_previous_board_pose = (
                 self._last_board_pose
                 if pose_prior_is_fresh(
                     self._last_board_pose_stamp_ns,
@@ -247,12 +312,22 @@ class ArucoDetectorNode(Node):
                 )
                 else None
             )
+            motion_gate_previous_board_pose = (
+                self._last_board_pose
+                if pose_prior_is_fresh(
+                    self._last_board_pose_stamp_ns,
+                    current_stamp_ns,
+                    self.motion_gate_prior_timeout_sec,
+                )
+                else None
+            )
             estimate = self.board_definition.estimate_pose(
                 corners,
                 ids,
                 self.camera_matrix,
                 self.dist_coeffs,
-                previous_board_pose=previous_board_pose,
+                single_marker_previous_board_pose=single_marker_previous_board_pose,
+                motion_gate_previous_board_pose=motion_gate_previous_board_pose,
                 camera_to_base=self._camera_to_base,
                 min_markers=self.min_markers_for_board,
                 min_markers_to_initialize=self.min_markers_to_initialize,
@@ -296,7 +371,7 @@ class ArucoDetectorNode(Node):
     def _publish_board_pose(self, estimate: BoardPoseEstimate, timestamp) -> None:
         board_rvec, board_tvec = estimate.board_pose
         quat = Rotation.from_rotvec(board_rvec).as_quat()
-        covariance = self._measurement_covariance(estimate)
+        covariance = measurement_covariance_from_estimate(estimate)
 
         pose_msg = PoseWithCovarianceStamped()
         pose_msg.header.stamp = timestamp
@@ -332,58 +407,7 @@ class ArucoDetectorNode(Node):
         self.tf_broadcaster.sendTransform(tf_msg)
 
     def _measurement_covariance(self, estimate: BoardPoseEstimate) -> np.ndarray:
-        if estimate.visible_markers >= 3:
-            base_xy_std = 0.015
-            base_z_std = 0.03
-            base_roll_std = np.deg2rad(8.0)
-            base_pitch_std = np.deg2rad(8.0)
-            base_yaw_std = np.deg2rad(5.0)
-        elif estimate.visible_markers == 2:
-            base_xy_std = 0.03
-            base_z_std = 0.06
-            base_roll_std = np.deg2rad(12.0)
-            base_pitch_std = np.deg2rad(12.0)
-            base_yaw_std = np.deg2rad(8.0)
-        else:
-            base_xy_std = 0.07
-            base_z_std = 0.12
-            base_roll_std = np.deg2rad(22.0)
-            base_pitch_std = np.deg2rad(22.0)
-            base_yaw_std = np.deg2rad(14.0)
-
-        reprojection_scale = float(
-            np.clip(1.0 + 0.4 * max(estimate.reprojection_rmse_px - 0.5, 0.0), 1.0, 4.0)
-        )
-        area_scale = float(np.clip(np.sqrt(16000.0 / max(estimate.image_area_px, 1.0)), 1.0, 4.0))
-        _, board_tvec = estimate.board_pose
-        distance_m = float(np.linalg.norm(board_tvec))
-        cosine_view = float(
-            np.clip(board_tvec[2] / max(distance_m, 1.0e-6), -1.0, 1.0)
-        )
-        view_angle_deg = float(np.degrees(np.arccos(cosine_view)))
-        translation_view_scale = float(
-            np.clip(1.0 + max(view_angle_deg - 55.0, 0.0) / 50.0, 1.0, 2.5)
-        )
-        rotation_view_scale = float(
-            np.clip(1.0 + max(view_angle_deg - 25.0, 0.0) / 20.0, 1.0, 4.0)
-        )
-        fallback_rotation_scale = 2.0 if estimate.used_single_marker_fallback else 1.0
-        translation_scale = reprojection_scale * area_scale * translation_view_scale
-        rotation_scale = (
-            reprojection_scale
-            * area_scale
-            * rotation_view_scale
-            * fallback_rotation_scale
-        )
-
-        covariance = np.zeros((6, 6), dtype=float)
-        covariance[0, 0] = (base_xy_std * translation_scale) ** 2
-        covariance[1, 1] = (base_xy_std * translation_scale) ** 2
-        covariance[2, 2] = (base_z_std * translation_scale) ** 2
-        covariance[3, 3] = (base_roll_std * rotation_scale) ** 2
-        covariance[4, 4] = (base_pitch_std * rotation_scale) ** 2
-        covariance[5, 5] = (base_yaw_std * rotation_scale) ** 2
-        return covariance
+        return measurement_covariance_from_estimate(estimate)
 
     def _publish_debug_image(self, debug_image, msg: Image) -> None:
         debug_msg = self.bridge.cv2_to_imgmsg(debug_image, encoding='bgr8')

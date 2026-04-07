@@ -167,6 +167,8 @@ class BoardDefinition:
         camera_matrix,
         dist_coeffs,
         previous_board_pose: tuple[np.ndarray, np.ndarray] | None = None,
+        single_marker_previous_board_pose: tuple[np.ndarray, np.ndarray] | None = None,
+        motion_gate_previous_board_pose: tuple[np.ndarray, np.ndarray] | None = None,
         camera_to_base: np.ndarray | None = None,
         min_markers: int = 1,
         min_markers_to_initialize: int = 2,
@@ -191,7 +193,17 @@ class BoardDefinition:
         if len(detections) < max(1, int(min_markers)):
             return None
 
-        if previous_board_pose is None and len(detections) < max(1, int(min_markers_to_initialize)):
+        if single_marker_previous_board_pose is None:
+            single_marker_previous_board_pose = previous_board_pose
+        if motion_gate_previous_board_pose is None:
+            motion_gate_previous_board_pose = previous_board_pose
+
+        active_prior = (
+            single_marker_previous_board_pose
+            if len(detections) == 1
+            else motion_gate_previous_board_pose
+        )
+        if active_prior is None and len(detections) < max(1, int(min_markers_to_initialize)):
             return None
 
         if len(detections) == 1:
@@ -199,7 +211,7 @@ class BoardDefinition:
                 detections[0],
                 camera_matrix,
                 dist_coeffs,
-                previous_board_pose,
+                single_marker_previous_board_pose,
                 camera_to_base,
                 max_position_jump_m=max_position_jump_m,
                 max_rotation_jump_deg=max_rotation_jump_deg,
@@ -219,7 +231,7 @@ class BoardDefinition:
             detections,
             camera_matrix,
             dist_coeffs,
-            previous_board_pose,
+            motion_gate_previous_board_pose,
             camera_to_base,
             max_position_jump_m=max_position_jump_m,
             max_rotation_jump_deg=max_rotation_jump_deg,

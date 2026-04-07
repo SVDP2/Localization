@@ -49,6 +49,7 @@ class GyroRelativeEskfSnapshot:
 
 @dataclass(frozen=True)
 class GyroRelativeEskfUpdateResult:
+    accepted_pose_update: bool
     used_rotation_update: bool
     position_innovation_m: float
     rotation_innovation_deg: float
@@ -231,17 +232,19 @@ class GyroRelativeEskf:
         rotation_residual_deg = float(np.degrees(np.linalg.norm(rotation_residual)))
         used_rotation_update = rotation_residual_deg <= float(max(rotation_gate_deg, 0.0))
 
-        if used_rotation_update:
-            innovation = np.concatenate([position_residual, rotation_residual], axis=0)
-            observation = np.zeros((6, 12), dtype=float)
-            observation[0:3, 0:3] = np.eye(3, dtype=float)
-            observation[3:6, 6:9] = np.eye(3, dtype=float)
-            measurement_covariance_used = measurement_covariance.copy()
-        else:
-            innovation = position_residual
-            observation = np.zeros((3, 12), dtype=float)
-            observation[:, 0:3] = np.eye(3, dtype=float)
-            measurement_covariance_used = measurement_covariance[0:3, 0:3].copy()
+        if not used_rotation_update:
+            return GyroRelativeEskfUpdateResult(
+                accepted_pose_update=False,
+                used_rotation_update=False,
+                position_innovation_m=float(np.linalg.norm(position_residual)),
+                rotation_innovation_deg=rotation_residual_deg,
+            )
+
+        innovation = np.concatenate([position_residual, rotation_residual], axis=0)
+        observation = np.zeros((6, 12), dtype=float)
+        observation[0:3, 0:3] = np.eye(3, dtype=float)
+        observation[3:6, 6:9] = np.eye(3, dtype=float)
+        measurement_covariance_used = measurement_covariance.copy()
 
         measurement_covariance_used = 0.5 * (
             measurement_covariance_used + measurement_covariance_used.T
@@ -269,6 +272,7 @@ class GyroRelativeEskf:
         )
 
         return GyroRelativeEskfUpdateResult(
+            accepted_pose_update=True,
             used_rotation_update=used_rotation_update,
             position_innovation_m=float(np.linalg.norm(position_residual)),
             rotation_innovation_deg=rotation_residual_deg,
