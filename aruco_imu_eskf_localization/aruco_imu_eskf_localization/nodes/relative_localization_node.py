@@ -77,7 +77,7 @@ class RelativeLocalizationNode(Node):
         self.declare_parameter('output_rate_hz', 100.0)
         self.declare_parameter('reset_timeout_sec', 1.0)
         self.declare_parameter('vision_delay_buffer_sec', 0.75)
-        self.declare_parameter('vision_rotation_gate_deg', 35.0)
+        self.declare_parameter('vision_rotation_gate_deg', 10.0)
         self.declare_parameter('velocity_damping_per_sec', 1.5)
         self.declare_parameter('position_process_noise_std_mps2', 0.3)
         self.declare_parameter('gyro_noise_std_radps', 0.05)
@@ -88,6 +88,8 @@ class RelativeLocalizationNode(Node):
         self.declare_parameter('initial_velocity_std_mps', 0.75)
         self.declare_parameter('initial_orientation_std_deg', 20.0)
         self.declare_parameter('initial_gyro_bias_std_radps', 0.15)
+
+        # Legacy camera extrinsic parameters kept only for config compatibility.
         self.declare_parameter('base_to_camera_translation', [0.27, 0.0, 0.135])
         self.declare_parameter(
             'base_to_camera_quaternion_xyzw',
@@ -125,11 +127,6 @@ class RelativeLocalizationNode(Node):
         self._gyro_bias_bootstrap_max_std_radps = float(
             self.get_parameter('gyro_bias_bootstrap_max_std_radps').value
         )
-        self._base_to_camera = _transform_matrix(
-            self.get_parameter('base_to_camera_translation').value,
-            self.get_parameter('base_to_camera_quaternion_xyzw').value,
-        )
-        self._camera_to_base = np.linalg.inv(self._base_to_camera)
         self._base_to_imu = _transform_matrix(
             self.get_parameter('base_to_imu_translation').value,
             self.get_parameter('base_to_imu_quaternion_xyzw').value,
@@ -163,6 +160,8 @@ class RelativeLocalizationNode(Node):
         self._cached_imu_frame_id: str | None = None
         self._cached_rotation_base_from_imu_tf: np.ndarray | None = None
         self._last_imu_tf_warning_ns: int | None = None
+        self._cached_camera_to_base_tf: np.ndarray | None = None
+        self._last_camera_tf_warning_ns: int | None = None
         self._last_vision_stamp_ns: int | None = None
         self._last_rotation_skip_log_ns: int | None = None
 
@@ -213,6 +212,9 @@ class RelativeLocalizationNode(Node):
         else:
             self.get_logger().info('using configured base_to_imu rotation for IMU frame alignment')
         self.get_logger().info(
+            f'resolving camera extrinsic from TF {self._base_frame} <- {self._camera_frame}'
+        )
+        self.get_logger().info(
             'running gyro-led relative pose filtering with ArUco pose updates.'
         )
         if self._static_tf_broadcaster is not None:
@@ -228,6 +230,17 @@ class RelativeLocalizationNode(Node):
 
         self.get_logger().warn(message)
         self._last_imu_tf_warning_ns = now_ns
+
+    def _maybe_log_camera_tf_warning(self, message: str) -> None:
+        now_ns = self.get_clock().now().nanoseconds
+        if (
+            self._last_camera_tf_warning_ns is not None
+            and (now_ns - self._last_camera_tf_warning_ns) < 1_000_000_000
+        ):
+            return
+
+        self.get_logger().warn(message)
+        self._last_camera_tf_warning_ns = now_ns
 
     def _rotation_base_from_imu_message(self, imu_frame_id: str) -> np.ndarray:
         if not self._use_imu_frame_tf:
@@ -276,6 +289,44 @@ class RelativeLocalizationNode(Node):
         )
         return rotation_base_from_imu
 
+    def _camera_to_base_from_tf(self) -> np.ndarray | None:
+        if self._cached_camera_to_base_tf is not None:
+            return self._cached_camera_to_base_tf
+
+        try:
+            tf_msg = self._tf_buffer.lookup_transform(
+                self._base_frame,
+                self._camera_frame,
+                Time(),
+            )
+        except Exception as exc:
+            self._maybe_log_camera_tf_warning(
+                f'failed to resolve camera TF {self._base_frame} <- {self._camera_frame}: {exc}'
+            )
+            return None
+
+        quat = np.array(
+            [
+                tf_msg.transform.rotation.x,
+                tf_msg.transform.rotation.y,
+                tf_msg.transform.rotation.z,
+                tf_msg.transform.rotation.w,
+            ],
+            dtype=float,
+        )
+        camera_to_base = np.eye(4, dtype=float)
+        camera_to_base[:3, :3] = Rotation.from_quat(quat).as_matrix()
+        camera_to_base[:3, 3] = np.array(
+            [
+                tf_msg.transform.translation.x,
+                tf_msg.transform.translation.y,
+                tf_msg.transform.translation.z,
+            ],
+            dtype=float,
+        )
+        self._cached_camera_to_base_tf = camera_to_base
+        return camera_to_base
+
     def _imu_callback(self, msg: Imu) -> None:
         stamp_ns = _stamp_to_nanoseconds(msg.header.stamp)
         angular_velocity_imu = np.array(
@@ -311,7 +362,10 @@ class RelativeLocalizationNode(Node):
 
     def _board_pose_callback(self, msg: PoseWithCovarianceStamped) -> None:
         stamp_ns = _stamp_to_nanoseconds(msg.header.stamp)
-        leader_rear_to_base, measurement_covariance = self._leader_measurement_from_board_msg(msg)
+        measurement = self._leader_measurement_from_board_msg(msg)
+        if measurement is None:
+            return
+        leader_rear_to_base, measurement_covariance = measurement
 
         if self._last_vision_stamp_ns is not None and stamp_ns < self._last_vision_stamp_ns:
             self.get_logger().warn(
@@ -371,7 +425,11 @@ class RelativeLocalizationNode(Node):
     def _leader_measurement_from_board_msg(
         self,
         msg: PoseWithCovarianceStamped,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray] | None:
+        camera_to_base = self._camera_to_base_from_tf()
+        if camera_to_base is None:
+            return None
+
         position = np.array(
             [
                 msg.pose.pose.position.x,
@@ -390,7 +448,7 @@ class RelativeLocalizationNode(Node):
             dtype=float,
         )
         board_to_camera = _pose_to_matrix(position, quat)
-        board_to_base = board_to_camera @ self._camera_to_base
+        board_to_base = board_to_camera @ camera_to_base
         leader_rear_to_base = self._leader_rear_from_board @ board_to_base
         board_covariance = np.asarray(msg.pose.covariance, dtype=float).reshape(6, 6)
         leader_covariance = transform_pose_covariance(

@@ -6,17 +6,20 @@ aruco_detector_node:
 
     image_topic: /image_raw                                # 입력 영상 토픽
     board_pose_topic: /localization/aruco/board_pose       # raw board pose 측정 출력
+    pose_prior_topic: /localization/relative/pose          # ESKF filtered pose prior 입력 토픽
     debug_image_topic: /localization/aruco/debug_image     # 디버그 오버레이 영상 출력
     publish_tf: true                                       # detector 단계의 board->camera TF 출력 여부
 
+    base_frame: base_link                                  # TF lookup에 사용할 차량 바디 프레임 이름
     camera_frame_id: usb_cam                               # 카메라 프레임 이름
     board_frame: board                                     # 보드 기준 프레임 이름
-    base_to_camera_translation: [0.27, 0.0, 0.135]        # base_link -> camera 평행이동 [m]
-    base_to_camera_quaternion_xyzw: [-0.5, 0.5, -0.5, 0.5]  # base_link -> camera 회전 [xyzw]
 
     corner_refinement_method: SUBPIX                       # 코너 refinement 방식
     enable_detected_marker_refinement: true                # board 기반 누락 마커 재탐색 사용 여부
     pose_refinement_method: lm                             # solvePnP 이후 pose refinement 방식
+    rectify_balance: 0.0                                   # fisheye rectification balance [0..1]
+    pose_prior_timeout_sec: 0.25                           # fused pose prior 유효 시간 [s]
+    pose_prior_rotation_gate_deg: 15.0                     # fused prior 대비 candidate 회전 gate [deg]
 
     min_markers_for_board: 2                               # 기본값은 2개 이상 마커만 허용해 single-marker fallback 비활성
     min_markers_to_initialize: 2                           # prior 없이 초기화할 최소 마커 수
@@ -56,8 +59,6 @@ aruco_imu_eskf_localization_node:
 
     base_to_imu_translation: [0.06, 0.0, 0.095]           # base_link -> IMU 평행이동 [m]
     base_to_imu_quaternion_xyzw: [0.0, 0.0, 0.0, 1.0]     # base_link -> IMU 회전 [xyzw]
-    base_to_camera_translation: [0.27, 0.0, 0.135]        # base_link -> camera 평행이동 [m]
-    base_to_camera_quaternion_xyzw: [-0.5, 0.5, -0.5, 0.5]  # base_link -> camera 회전 [xyzw]
 
     output_rate_hz: 100.0                                  # 최종 pose/odom publish 주파수 [Hz]
     reset_timeout_sec: 1.0                                 # vision 끊김 후 재초기화 기준 시간 [s]

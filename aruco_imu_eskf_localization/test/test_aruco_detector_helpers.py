@@ -6,6 +6,7 @@ from aruco_imu_eskf_localization.estimation.board_pose_estimator import BoardPos
 from aruco_imu_eskf_localization.nodes.aruco_detector_node import (
     measurement_covariance_from_estimate,
     pose_prior_is_fresh,
+    select_latest_pose_prior,
 )
 
 
@@ -53,6 +54,22 @@ class TestArucoDetectorHelpers(unittest.TestCase):
 
         self.assertGreater(fallback_covariance[2, 2], base_covariance[2, 2])
         self.assertGreater(fallback_covariance[5, 5], base_covariance[5, 5])
+
+    def test_select_latest_pose_prior_ignores_future_and_stale_samples(self):
+        prior_samples = [
+            (1_700_000_000, np.eye(4, dtype=float) * 1.0),
+            (1_950_000_000, np.eye(4, dtype=float) * 2.0),
+            (2_100_000_000, np.eye(4, dtype=float) * 3.0),
+        ]
+
+        selected_prior = select_latest_pose_prior(
+            prior_samples,
+            current_stamp_ns=2_000_000_000,
+            timeout_sec=0.2,
+        )
+
+        self.assertIsNotNone(selected_prior)
+        self.assertTrue(np.allclose(selected_prior, np.eye(4, dtype=float) * 2.0))
 
 
 if __name__ == '__main__':

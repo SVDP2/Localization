@@ -1,4 +1,5 @@
 calibration_date: '2026-04-07'
+camera_model: fisheye
 camera_matrix:
   columns: 3
   data:

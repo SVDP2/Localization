@@ -70,6 +70,18 @@ def board_pose_delta(
     return position_delta_m, rotation_delta_deg, abs(heading_delta_deg)
 
 
+def board_pose_rotation_delta_deg(
+    previous_pose: tuple[np.ndarray, np.ndarray],
+    current_pose: tuple[np.ndarray, np.ndarray],
+    sensor_to_base: np.ndarray | None = None,
+) -> float:
+    return board_pose_delta(
+        previous_pose,
+        current_pose,
+        sensor_to_base=sensor_to_base,
+    )[1]
+
+
 @dataclass(frozen=True)
 class BoardPoseEstimate:
     rvec: np.ndarray
@@ -169,6 +181,10 @@ class BoardDefinition:
         previous_board_pose: tuple[np.ndarray, np.ndarray] | None = None,
         single_marker_previous_board_pose: tuple[np.ndarray, np.ndarray] | None = None,
         motion_gate_previous_board_pose: tuple[np.ndarray, np.ndarray] | None = None,
+        candidate_score_previous_board_pose: tuple[np.ndarray, np.ndarray] | None = None,
+        iterative_seed_board_pose: tuple[np.ndarray, np.ndarray] | None = None,
+        reference_board_pose: tuple[np.ndarray, np.ndarray] | None = None,
+        reference_rotation_gate_deg: float | None = None,
         camera_to_base: np.ndarray | None = None,
         min_markers: int = 1,
         min_markers_to_initialize: int = 2,
@@ -197,6 +213,8 @@ class BoardDefinition:
             single_marker_previous_board_pose = previous_board_pose
         if motion_gate_previous_board_pose is None:
             motion_gate_previous_board_pose = previous_board_pose
+        if candidate_score_previous_board_pose is None:
+            candidate_score_previous_board_pose = motion_gate_previous_board_pose
 
         active_prior = (
             single_marker_previous_board_pose
@@ -212,6 +230,10 @@ class BoardDefinition:
                 camera_matrix,
                 dist_coeffs,
                 single_marker_previous_board_pose,
+                candidate_score_previous_board_pose,
+                iterative_seed_board_pose,
+                reference_board_pose,
+                reference_rotation_gate_deg,
                 camera_to_base,
                 max_position_jump_m=max_position_jump_m,
                 max_rotation_jump_deg=max_rotation_jump_deg,
@@ -232,6 +254,10 @@ class BoardDefinition:
             camera_matrix,
             dist_coeffs,
             motion_gate_previous_board_pose,
+            candidate_score_previous_board_pose,
+            iterative_seed_board_pose,
+            reference_board_pose,
+            reference_rotation_gate_deg,
             camera_to_base,
             max_position_jump_m=max_position_jump_m,
             max_rotation_jump_deg=max_rotation_jump_deg,
@@ -252,7 +278,11 @@ class BoardDefinition:
         detections: list[tuple[int, np.ndarray]],
         camera_matrix,
         dist_coeffs,
-        previous_board_pose: tuple[np.ndarray, np.ndarray] | None,
+        motion_gate_previous_board_pose: tuple[np.ndarray, np.ndarray] | None,
+        candidate_score_previous_board_pose: tuple[np.ndarray, np.ndarray] | None,
+        iterative_seed_board_pose: tuple[np.ndarray, np.ndarray] | None,
+        reference_board_pose: tuple[np.ndarray, np.ndarray] | None,
+        reference_rotation_gate_deg: float | None,
         camera_to_base: np.ndarray | None,
         max_position_jump_m: float,
         max_rotation_jump_deg: float,
@@ -290,17 +320,25 @@ class BoardDefinition:
                 image_points,
                 camera_matrix,
                 dist_coeffs,
-                previous_board_pose=previous_board_pose,
+                seed_board_pose=(
+                    iterative_seed_board_pose
+                    if iterative_seed_board_pose is not None
+                    else motion_gate_previous_board_pose
+                ),
                 image_area_px=image_area_px,
                 visible_markers=len(detections),
+                used_single_marker_fallback=False,
                 pose_refinement_method=pose_refinement_method,
             )
             if iterative_candidate is not None:
                 candidates = [iterative_candidate]
 
-        return self._select_best_candidate(
+        best_candidate = self._select_best_candidate(
             candidates,
-            previous_board_pose=previous_board_pose,
+            motion_gate_previous_board_pose=motion_gate_previous_board_pose,
+            candidate_score_previous_board_pose=candidate_score_previous_board_pose,
+            reference_board_pose=reference_board_pose,
+            reference_rotation_gate_deg=reference_rotation_gate_deg,
             sensor_to_base=camera_to_base,
             max_position_jump_m=max_position_jump_m,
             max_rotation_jump_deg=max_rotation_jump_deg,
@@ -314,13 +352,36 @@ class BoardDefinition:
             feasible_z_max_m=feasible_z_max_m,
             single_marker_min_score_margin=single_marker_min_score_margin,
         )
+        if best_candidate is None:
+            return None
+
+        refined_candidate = self._solve_iterative_candidate(
+            object_points,
+            image_points,
+            camera_matrix,
+            dist_coeffs,
+            seed_board_pose=(
+                iterative_seed_board_pose
+                if iterative_seed_board_pose is not None
+                else best_candidate.board_pose
+            ),
+            image_area_px=image_area_px,
+            visible_markers=len(detections),
+            used_single_marker_fallback=best_candidate.used_single_marker_fallback,
+            pose_refinement_method=pose_refinement_method,
+        )
+        return refined_candidate if refined_candidate is not None else best_candidate
 
     def _estimate_single_marker_pose(
         self,
         detection: tuple[int, np.ndarray],
         camera_matrix,
         dist_coeffs,
-        previous_board_pose: tuple[np.ndarray, np.ndarray] | None,
+        motion_gate_previous_board_pose: tuple[np.ndarray, np.ndarray] | None,
+        candidate_score_previous_board_pose: tuple[np.ndarray, np.ndarray] | None,
+        iterative_seed_board_pose: tuple[np.ndarray, np.ndarray] | None,
+        reference_board_pose: tuple[np.ndarray, np.ndarray] | None,
+        reference_rotation_gate_deg: float | None,
         camera_to_base: np.ndarray | None,
         max_position_jump_m: float,
         max_rotation_jump_deg: float,
@@ -335,7 +396,7 @@ class BoardDefinition:
         single_marker_min_score_margin: float,
         pose_refinement_method: str,
     ) -> BoardPoseEstimate | None:
-        if previous_board_pose is None:
+        if motion_gate_previous_board_pose is None:
             return None
 
         marker_id, marker_corners = detection
@@ -351,9 +412,12 @@ class BoardDefinition:
             flags=cv2.SOLVEPNP_IPPE_SQUARE,
             pose_refinement_method=pose_refinement_method,
         )
-        return self._select_best_candidate(
+        best_candidate = self._select_best_candidate(
             candidates,
-            previous_board_pose=previous_board_pose,
+            motion_gate_previous_board_pose=motion_gate_previous_board_pose,
+            candidate_score_previous_board_pose=candidate_score_previous_board_pose,
+            reference_board_pose=reference_board_pose,
+            reference_rotation_gate_deg=reference_rotation_gate_deg,
             sensor_to_base=camera_to_base,
             max_position_jump_m=max_position_jump_m,
             max_rotation_jump_deg=max_rotation_jump_deg,
@@ -367,6 +431,25 @@ class BoardDefinition:
             feasible_z_max_m=feasible_z_max_m,
             single_marker_min_score_margin=single_marker_min_score_margin,
         )
+        if best_candidate is None:
+            return None
+
+        refined_candidate = self._solve_iterative_candidate(
+            object_points,
+            marker_corners,
+            camera_matrix,
+            dist_coeffs,
+            seed_board_pose=(
+                iterative_seed_board_pose
+                if iterative_seed_board_pose is not None
+                else best_candidate.board_pose
+            ),
+            image_area_px=self._image_area_px([detection]),
+            visible_markers=1,
+            used_single_marker_fallback=True,
+            pose_refinement_method=pose_refinement_method,
+        )
+        return refined_candidate if refined_candidate is not None else best_candidate
 
     def _solve_ippe_candidates(
         self,
@@ -444,14 +527,15 @@ class BoardDefinition:
         image_points: np.ndarray,
         camera_matrix,
         dist_coeffs,
-        previous_board_pose: tuple[np.ndarray, np.ndarray] | None,
+        seed_board_pose: tuple[np.ndarray, np.ndarray] | None,
         image_area_px: float,
         visible_markers: int,
+        used_single_marker_fallback: bool,
         pose_refinement_method: str,
     ) -> BoardPoseEstimate | None:
         try:
-            if previous_board_pose is not None:
-                previous_rvec, previous_tvec = previous_board_pose
+            if seed_board_pose is not None:
+                previous_rvec, previous_tvec = seed_board_pose
                 previous_rvec, previous_tvec = invert_observation(previous_rvec, previous_tvec)
                 success, rvec, tvec = cv2.solvePnP(
                     object_points,
@@ -500,13 +584,16 @@ class BoardDefinition:
                 tvec,
             ),
             image_area_px=image_area_px,
-            used_single_marker_fallback=False,
+            used_single_marker_fallback=used_single_marker_fallback,
         )
 
     def _select_best_candidate(
         self,
         candidates: list[BoardPoseEstimate],
-        previous_board_pose: tuple[np.ndarray, np.ndarray] | None,
+        motion_gate_previous_board_pose: tuple[np.ndarray, np.ndarray] | None,
+        candidate_score_previous_board_pose: tuple[np.ndarray, np.ndarray] | None,
+        reference_board_pose: tuple[np.ndarray, np.ndarray] | None,
+        reference_rotation_gate_deg: float | None,
         sensor_to_base: np.ndarray | None,
         max_position_jump_m: float,
         max_rotation_jump_deg: float,
@@ -521,6 +608,7 @@ class BoardDefinition:
         single_marker_min_score_margin: float,
     ) -> BoardPoseEstimate | None:
         ranked_candidates: list[tuple[float, BoardPoseEstimate]] = []
+        reference_ranked_candidates: list[tuple[float, BoardPoseEstimate]] = []
         for candidate in candidates:
             candidate_board_pose = candidate.board_pose
             if not self._passes_front_visibility_gate(
@@ -539,8 +627,8 @@ class BoardDefinition:
                 sensor_to_base=sensor_to_base,
             ):
                 continue
-            if previous_board_pose is not None and not self._passes_motion_gate(
-                previous_board_pose,
+            if motion_gate_previous_board_pose is not None and not self._passes_motion_gate(
+                motion_gate_previous_board_pose,
                 candidate_board_pose,
                 sensor_to_base=sensor_to_base,
                 max_position_jump_m=max_position_jump_m,
@@ -549,22 +637,37 @@ class BoardDefinition:
             ):
                 continue
             score = self._candidate_score(
-                previous_board_pose,
+                candidate_score_previous_board_pose,
                 candidate_board_pose,
                 candidate.reprojection_rmse_px,
                 sensor_to_base=sensor_to_base,
             )
             ranked_candidates.append((score, candidate))
+            if (
+                reference_board_pose is None
+                or reference_rotation_gate_deg is None
+                or board_pose_rotation_delta_deg(
+                    reference_board_pose,
+                    candidate_board_pose,
+                    sensor_to_base=sensor_to_base,
+                ) <= float(reference_rotation_gate_deg)
+            ):
+                reference_ranked_candidates.append((score, candidate))
 
         if not ranked_candidates:
             return None
 
-        ranked_candidates.sort(key=lambda item: item[0])
-        best_score, best_candidate = ranked_candidates[0]
+        selected_candidates = (
+            reference_ranked_candidates
+            if reference_ranked_candidates
+            else ranked_candidates
+        )
+        selected_candidates.sort(key=lambda item: item[0])
+        best_score, best_candidate = selected_candidates[0]
         if (
             best_candidate.used_single_marker_fallback
-            and len(ranked_candidates) > 1
-            and (ranked_candidates[1][0] - best_score) < float(single_marker_min_score_margin)
+            and len(selected_candidates) > 1
+            and (selected_candidates[1][0] - best_score) < float(single_marker_min_score_margin)
         ):
             return None
         return best_candidate

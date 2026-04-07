@@ -43,6 +43,25 @@ class TestGyroRelativeEskf(unittest.TestCase):
 
         self.assertAlmostEqual(yaw_deg, np.degrees(0.2), delta=0.75)
 
+    def test_predict_orientation_covariance_uses_dt_scaling(self):
+        filter_core = GyroRelativeEskf(
+            gyro_noise_std_radps=0.2,
+            initial_orientation_std_deg=1.0,
+            initial_gyro_bias_std_radps=1.0e-4,
+        )
+        filter_core.initialize(
+            stamp_ns=0,
+            pose_matrix=np.eye(4, dtype=float),
+            measurement_covariance=np.diag([1.0e-3] * 6),
+        )
+        initial_covariance = filter_core.snapshot().covariance.copy()
+
+        filter_core.predict(500_000_000, np.zeros(3, dtype=float))
+        predicted_covariance = filter_core.snapshot().covariance
+
+        orientation_variance_delta = predicted_covariance[6, 6] - initial_covariance[6, 6]
+        self.assertAlmostEqual(orientation_variance_delta, 0.2**2 * 0.5, delta=1.0e-6)
+
     def test_update_pose_rejects_full_pose_when_gate_is_exceeded(self):
         filter_core = GyroRelativeEskf()
         filter_core.initialize(

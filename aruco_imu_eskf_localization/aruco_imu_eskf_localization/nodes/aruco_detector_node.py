@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 import os
 
 import cv2
@@ -13,10 +14,16 @@ from cv_bridge import CvBridge
 from geometry_msgs.msg import PoseWithCovarianceStamped, TransformStamped
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from rclpy.time import Time
 from scipy.spatial.transform import Rotation
 from sensor_msgs.msg import Image
-from tf2_ros import TransformBroadcaster
+from tf2_ros import Buffer, TransformBroadcaster, TransformListener
 
+from aruco_imu_eskf_localization.common.camera_calibration import (
+    build_fisheye_rectification,
+    load_camera_calibration,
+)
 from aruco_imu_eskf_localization.common.frame_conventions import transform_leader_rear_from_board
 from aruco_imu_eskf_localization.estimation.board_pose_estimator import (
     BoardDefinition,
@@ -49,6 +56,14 @@ def _transform_matrix(translation, quat_xyzw):
     return transform
 
 
+def _matrix_to_pose(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    matrix = np.asarray(matrix, dtype=float).reshape(4, 4)
+    return (
+        Rotation.from_matrix(matrix[:3, :3]).as_rotvec(),
+        matrix[:3, 3].copy(),
+    )
+
+
 def _corner_refinement_method(name: str) -> int:
     normalized = str(name).strip().upper()
     mapping = {
@@ -58,6 +73,25 @@ def _corner_refinement_method(name: str) -> int:
         'APRILTAG': getattr(cv2.aruco, 'CORNER_REFINE_APRILTAG', 3),
     }
     return int(mapping.get(normalized, mapping['SUBPIX']))
+
+
+def select_latest_pose_prior(
+    prior_samples: deque[tuple[int, np.ndarray]],
+    current_stamp_ns: int,
+    timeout_sec: float,
+) -> np.ndarray | None:
+    timeout_ns = int(max(float(timeout_sec), 0.0) * 1_000_000_000)
+    if timeout_ns <= 0:
+        return None
+
+    min_stamp_ns = current_stamp_ns - timeout_ns
+    for sample_stamp_ns, board_to_base in reversed(prior_samples):
+        if sample_stamp_ns >= current_stamp_ns:
+            continue
+        if sample_stamp_ns < min_stamp_ns:
+            break
+        return np.asarray(board_to_base, dtype=float).reshape(4, 4).copy()
+    return None
 
 
 def measurement_covariance_from_estimate(estimate: BoardPoseEstimate) -> np.ndarray:
@@ -128,12 +162,17 @@ class ArucoDetectorNode(Node):
         self.declare_parameter('marker_config_file', 'config/markers_board.yaml')
         self.declare_parameter('aruco_dict', 'DICT_6X6_250')
         self.declare_parameter('camera_calibration_file', 'config/cam_intrinsic.yaml')
+        self.declare_parameter('base_frame', 'base_link')
         self.declare_parameter('camera_frame_id', 'usb_cam')
         self.declare_parameter('board_frame', 'board')
         self.declare_parameter('image_topic', '/image_raw')
         self.declare_parameter('board_pose_topic', '/localization/aruco/board_pose')
+        self.declare_parameter('pose_prior_topic', '/localization/relative/pose')
         self.declare_parameter('debug_image_topic', '/localization/aruco/debug_image')
         self.declare_parameter('publish_tf', True)
+        self.declare_parameter('rectify_balance', 0.0)
+        self.declare_parameter('pose_prior_timeout_sec', 0.25)
+        self.declare_parameter('pose_prior_rotation_gate_deg', 15.0)
         self.declare_parameter('corner_refinement_method', 'SUBPIX')
         self.declare_parameter('enable_detected_marker_refinement', True)
         self.declare_parameter('min_markers_for_board', 2)
@@ -154,6 +193,8 @@ class ArucoDetectorNode(Node):
         self.declare_parameter('motion_gate_prior_timeout_sec', 1.0)
         self.declare_parameter('single_marker_min_score_margin', 0.25)
         self.declare_parameter('pose_refinement_method', 'lm')
+
+        # Legacy extrinsic parameters kept only for config compatibility.
         self.declare_parameter('base_to_camera_translation', [0.27, 0.0, 0.135])
         self.declare_parameter(
             'base_to_camera_quaternion_xyzw',
@@ -163,12 +204,21 @@ class ArucoDetectorNode(Node):
         marker_config_file = self.get_parameter('marker_config_file').value
         aruco_dict_name = self.get_parameter('aruco_dict').value
         camera_calibration_file = self.get_parameter('camera_calibration_file').value
+        self.base_frame = self.get_parameter('base_frame').value
         self.camera_frame_id = self.get_parameter('camera_frame_id').value
         self.board_frame = self.get_parameter('board_frame').value
         image_topic = self.get_parameter('image_topic').value
         board_pose_topic = self.get_parameter('board_pose_topic').value
+        pose_prior_topic = self.get_parameter('pose_prior_topic').value
         debug_image_topic = self.get_parameter('debug_image_topic').value
         self.publish_tf = bool(self.get_parameter('publish_tf').value)
+        self.rectify_balance = float(self.get_parameter('rectify_balance').value)
+        self.pose_prior_timeout_sec = float(
+            self.get_parameter('pose_prior_timeout_sec').value
+        )
+        self.pose_prior_rotation_gate_deg = float(
+            self.get_parameter('pose_prior_rotation_gate_deg').value
+        )
         corner_refinement = self.get_parameter('corner_refinement_method').value
         self.enable_detected_marker_refinement = bool(
             self.get_parameter('enable_detected_marker_refinement').value
@@ -209,17 +259,27 @@ class ArucoDetectorNode(Node):
         self.pose_refinement_method = str(
             self.get_parameter('pose_refinement_method').value
         )
-        self._base_to_camera = _transform_matrix(
-            self.get_parameter('base_to_camera_translation').value,
-            self.get_parameter('base_to_camera_quaternion_xyzw').value,
-        )
-        self._camera_to_base = np.linalg.inv(self._base_to_camera)
         self._leader_rear_from_board = transform_leader_rear_from_board()
 
         self.bridge = CvBridge()
         self.board_definition = self._load_board_config(marker_config_file)
-        self.camera_matrix, self.dist_coeffs = self._load_camera_calibration(
+        self._camera_calibration = self._load_camera_calibration(
             camera_calibration_file
+        )
+        self.camera_matrix = self._camera_calibration.camera_matrix
+        self.dist_coeffs = self._camera_calibration.distortion_coefficients
+        (
+            self._rectified_camera_matrix,
+            self._rectified_dist_coeffs,
+            self._rectify_map1,
+            self._rectify_map2,
+        ) = build_fisheye_rectification(
+            self._camera_calibration,
+            balance=self.rectify_balance,
+        )
+        self._calibration_image_size = (
+            self._camera_calibration.image_height,
+            self._camera_calibration.image_width,
         )
 
         aruco_dict_id = getattr(cv2.aruco, aruco_dict_name)
@@ -229,21 +289,43 @@ class ArucoDetectorNode(Node):
         self.detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
         self._aruco_board = self.board_definition.as_aruco_board(self.aruco_dict)
 
+        self._tf_buffer = Buffer()
+        self._tf_listener = TransformListener(self._tf_buffer, self)
         self.tf_broadcaster = TransformBroadcaster(self) if self.publish_tf else None
         self.create_subscription(Image, image_topic, self.image_callback, 10)
+        self.create_subscription(
+            PoseWithCovarianceStamped,
+            pose_prior_topic,
+            self._pose_prior_callback,
+            qos_profile_sensor_data,
+        )
 
         self.debug_image_pub = self.create_publisher(Image, debug_image_topic, 10)
         self.board_pose_pub = self.create_publisher(PoseWithCovarianceStamped, board_pose_topic, 10)
 
         self._last_board_pose: tuple[np.ndarray, np.ndarray] | None = None
         self._last_board_pose_stamp_ns: int | None = None
+        self._pose_prior_samples: deque[tuple[int, np.ndarray]] = deque()
+        self._cached_camera_to_base_tf: np.ndarray | None = None
+        self._cached_base_to_camera_tf: np.ndarray | None = None
+        self._last_camera_tf_warning_ns: int | None = None
+        self._last_pose_prior_warning_ns: int | None = None
+        self._last_image_size_warning_ns: int | None = None
 
         self.get_logger().info(f'aruco dict: {aruco_dict_name}')
         self.get_logger().info(f'image topic: {image_topic}')
+        self.get_logger().info(f'pose prior topic: {pose_prior_topic}')
         self.get_logger().info(f'board pose topic: {board_pose_topic}')
         self.get_logger().info(
             f'loaded {len(self.board_definition.marker_sizes_m)} marker definitions'
         )
+        self.get_logger().info(
+            f'resolving camera extrinsic from TF {self.base_frame} <- {self.camera_frame_id}'
+        )
+        if self._camera_calibration.used_legacy_default:
+            self.get_logger().warn(
+                'camera calibration is missing camera_model; defaulting to fisheye'
+            )
         if self.board_definition.description:
             self.get_logger().info(f'board: {self.board_definition.description}')
 
@@ -269,21 +351,136 @@ class ArucoDetectorNode(Node):
 
     def _load_camera_calibration(self, calib_file: str):
         calib_path = self._resolve_config_path(calib_file)
-        with open(calib_path, 'r', encoding='utf-8') as file_obj:
-            calib = yaml.safe_load(file_obj)
+        return load_camera_calibration(calib_path)
 
-        camera_matrix = np.asarray(calib['camera_matrix']['data'], dtype=np.float64).reshape(3, 3)
-        dist_coeffs = np.asarray(
-            calib['distortion_coefficients']['data'],
-            dtype=np.float64,
+    def _maybe_log_camera_tf_warning(self, message: str) -> None:
+        now_ns = self.get_clock().now().nanoseconds
+        if (
+            self._last_camera_tf_warning_ns is not None
+            and (now_ns - self._last_camera_tf_warning_ns) < 1_000_000_000
+        ):
+            return
+
+        self.get_logger().warn(message)
+        self._last_camera_tf_warning_ns = now_ns
+
+    def _maybe_log_pose_prior_warning(self, message: str) -> None:
+        now_ns = self.get_clock().now().nanoseconds
+        if (
+            self._last_pose_prior_warning_ns is not None
+            and (now_ns - self._last_pose_prior_warning_ns) < 1_000_000_000
+        ):
+            return
+
+        self.get_logger().warn(message)
+        self._last_pose_prior_warning_ns = now_ns
+
+    def _maybe_log_image_size_warning(self, image_shape: tuple[int, int]) -> None:
+        now_ns = self.get_clock().now().nanoseconds
+        if (
+            self._last_image_size_warning_ns is not None
+            and (now_ns - self._last_image_size_warning_ns) < 1_000_000_000
+        ):
+            return
+
+        self.get_logger().warn(
+            'camera image size does not match calibration image size; '
+            f'got {image_shape[1]}x{image_shape[0]}, expected '
+            f'{self._calibration_image_size[1]}x{self._calibration_image_size[0]}'
         )
-        return camera_matrix, dist_coeffs
+        self._last_image_size_warning_ns = now_ns
+
+    def _camera_transforms_from_tf(self) -> tuple[np.ndarray, np.ndarray] | None:
+        if (
+            self._cached_camera_to_base_tf is not None
+            and self._cached_base_to_camera_tf is not None
+        ):
+            return (
+                self._cached_camera_to_base_tf,
+                self._cached_base_to_camera_tf,
+            )
+
+        try:
+            tf_msg = self._tf_buffer.lookup_transform(
+                self.base_frame,
+                self.camera_frame_id,
+                Time(),
+            )
+        except Exception as exc:
+            self._maybe_log_camera_tf_warning(
+                f'failed to resolve camera TF {self.base_frame} <- {self.camera_frame_id}: {exc}'
+            )
+            return None
+
+        quat = np.array(
+            [
+                tf_msg.transform.rotation.x,
+                tf_msg.transform.rotation.y,
+                tf_msg.transform.rotation.z,
+                tf_msg.transform.rotation.w,
+            ],
+            dtype=float,
+        )
+        camera_to_base = np.eye(4, dtype=float)
+        camera_to_base[:3, :3] = Rotation.from_quat(quat).as_matrix()
+        camera_to_base[:3, 3] = np.array(
+            [
+                tf_msg.transform.translation.x,
+                tf_msg.transform.translation.y,
+                tf_msg.transform.translation.z,
+            ],
+            dtype=float,
+        )
+        base_to_camera = np.linalg.inv(camera_to_base)
+        self._cached_camera_to_base_tf = camera_to_base
+        self._cached_base_to_camera_tf = base_to_camera
+        return camera_to_base, base_to_camera
+
+    def _pose_prior_callback(self, msg: PoseWithCovarianceStamped) -> None:
+        frame_id = str(msg.header.frame_id).strip().lstrip('/')
+        if frame_id and frame_id != self.board_frame:
+            self._maybe_log_pose_prior_warning(
+                f'ignoring pose prior in unexpected frame {frame_id!r}; expected {self.board_frame!r}'
+            )
+            return
+
+        board_to_base = _transform_matrix(
+            [
+                msg.pose.pose.position.x,
+                msg.pose.pose.position.y,
+                msg.pose.pose.position.z,
+            ],
+            [
+                msg.pose.pose.orientation.x,
+                msg.pose.pose.orientation.y,
+                msg.pose.pose.orientation.z,
+                msg.pose.pose.orientation.w,
+            ],
+        )
+        stamp_ns = _stamp_to_nanoseconds(msg.header.stamp)
+        self._pose_prior_samples.append((stamp_ns, board_to_base))
+        keep_after_ns = stamp_ns - int(max(self.pose_prior_timeout_sec, 1.0) * 2.0e9)
+        while self._pose_prior_samples and self._pose_prior_samples[0][0] < keep_after_ns:
+            self._pose_prior_samples.popleft()
 
     def image_callback(self, msg: Image) -> None:
         try:
             cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-            debug_image = cv_image.copy()
-            gray = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
+            if cv_image.shape[:2] != self._calibration_image_size:
+                self._maybe_log_image_size_warning(cv_image.shape[:2])
+                debug_image = cv_image.copy()
+                self._draw_status_overlay(debug_image, 'image size != calibration')
+                self._publish_debug_image(debug_image, msg)
+                return
+
+            rectified_image = cv2.remap(
+                cv_image,
+                self._rectify_map1,
+                self._rectify_map2,
+                interpolation=cv2.INTER_LINEAR,
+            )
+            debug_image = rectified_image.copy()
+            gray = cv2.cvtColor(rectified_image, cv2.COLOR_BGR2GRAY)
             corners, ids, rejected = self.detector.detectMarkers(gray)
 
             if self.enable_detected_marker_refinement and ids is not None and len(ids) > 0:
@@ -293,8 +490,8 @@ class ArucoDetectorNode(Node):
                     corners,
                     ids,
                     rejected,
-                    self.camera_matrix,
-                    self.dist_coeffs,
+                    self._rectified_camera_matrix,
+                    self._rectified_dist_coeffs,
                 )
 
             if ids is None or len(ids) == 0:
@@ -302,33 +499,63 @@ class ArucoDetectorNode(Node):
                 self._publish_debug_image(debug_image, msg)
                 return
 
+            camera_transforms = self._camera_transforms_from_tf()
+            if camera_transforms is None:
+                self._draw_detected_markers(debug_image, corners, ids)
+                self._draw_status_overlay(debug_image, 'missing camera tf')
+                self._publish_debug_image(debug_image, msg)
+                return
+            camera_to_base, base_to_camera = camera_transforms
+
             current_stamp_ns = _stamp_to_nanoseconds(msg.header.stamp)
-            single_marker_previous_board_pose = (
-                self._last_board_pose
-                if pose_prior_is_fresh(
-                    self._last_board_pose_stamp_ns,
-                    current_stamp_ns,
-                    self.single_marker_prior_timeout_sec,
-                )
+            prior_board_to_base = select_latest_pose_prior(
+                self._pose_prior_samples,
+                current_stamp_ns,
+                self.pose_prior_timeout_sec,
+            )
+            fused_prior_board_pose = (
+                _matrix_to_pose(prior_board_to_base @ base_to_camera)
+                if prior_board_to_base is not None
                 else None
             )
-            motion_gate_previous_board_pose = (
-                self._last_board_pose
-                if pose_prior_is_fresh(
-                    self._last_board_pose_stamp_ns,
-                    current_stamp_ns,
-                    self.motion_gate_prior_timeout_sec,
+            single_marker_previous_board_pose = (
+                fused_prior_board_pose
+                if fused_prior_board_pose is not None
+                else (
+                    self._last_board_pose
+                    if pose_prior_is_fresh(
+                        self._last_board_pose_stamp_ns,
+                        current_stamp_ns,
+                        self.single_marker_prior_timeout_sec,
+                    )
+                    else None
                 )
-                else None
+            )
+            motion_gate_previous_board_pose = (
+                fused_prior_board_pose
+                if fused_prior_board_pose is not None
+                else (
+                    self._last_board_pose
+                    if pose_prior_is_fresh(
+                        self._last_board_pose_stamp_ns,
+                        current_stamp_ns,
+                        self.motion_gate_prior_timeout_sec,
+                    )
+                    else None
+                )
             )
             estimate = self.board_definition.estimate_pose(
                 corners,
                 ids,
-                self.camera_matrix,
-                self.dist_coeffs,
+                self._rectified_camera_matrix,
+                self._rectified_dist_coeffs,
                 single_marker_previous_board_pose=single_marker_previous_board_pose,
                 motion_gate_previous_board_pose=motion_gate_previous_board_pose,
-                camera_to_base=self._camera_to_base,
+                candidate_score_previous_board_pose=motion_gate_previous_board_pose,
+                iterative_seed_board_pose=fused_prior_board_pose,
+                reference_board_pose=fused_prior_board_pose,
+                reference_rotation_gate_deg=self.pose_prior_rotation_gate_deg,
+                camera_to_base=camera_to_base,
                 min_markers=self.min_markers_for_board,
                 min_markers_to_initialize=self.min_markers_to_initialize,
                 max_position_jump_m=self.max_position_jump_m,
@@ -418,9 +645,14 @@ class ArucoDetectorNode(Node):
         cv2.aruco.drawDetectedMarkers(image, corners, ids)
 
     def _draw_estimate_overlay(self, image, estimate: BoardPoseEstimate) -> None:
+        camera_transforms = self._camera_transforms_from_tf()
+        if camera_transforms is None:
+            self._draw_status_overlay(image, 'missing camera tf')
+            return
+        camera_to_base, _ = camera_transforms
         board_rvec, board_tvec = estimate.board_pose
         board_to_camera = pose_to_matrix(board_rvec, board_tvec)
-        board_to_base = board_to_camera @ self._camera_to_base
+        board_to_base = board_to_camera @ camera_to_base
         leader_rear_to_base = self._leader_rear_from_board @ board_to_base
         leader_position = leader_rear_to_base[:3, 3]
         rotation = Rotation.from_matrix(leader_rear_to_base[:3, :3])

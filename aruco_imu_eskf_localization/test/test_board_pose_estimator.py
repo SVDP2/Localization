@@ -229,7 +229,10 @@ class TestBoardPoseEstimator(unittest.TestCase):
 
         estimate = board._select_best_candidate(
             candidates,
-            previous_board_pose=previous_board_pose,
+            motion_gate_previous_board_pose=previous_board_pose,
+            candidate_score_previous_board_pose=previous_board_pose,
+            reference_board_pose=None,
+            reference_rotation_gate_deg=None,
             sensor_to_base=np.eye(4, dtype=float),
             max_position_jump_m=0.5,
             max_rotation_jump_deg=60.0,
@@ -245,6 +248,70 @@ class TestBoardPoseEstimator(unittest.TestCase):
         )
 
         self.assertIsNone(estimate)
+
+    def test_reference_rotation_gate_prefers_candidate_aligned_with_prior(self):
+        board = _make_board_definition()
+        reference_board_pose = invert_observation(*_true_observation())
+        good_rotation = Rotation.from_rotvec(reference_board_pose[0])
+        bad_rotation = Rotation.from_euler('Z', 40.0, degrees=True) * good_rotation
+        candidates = [
+            BoardPoseEstimate(
+                rvec=invert_observation(
+                    bad_rotation.as_rotvec(),
+                    reference_board_pose[1],
+                )[0],
+                tvec=invert_observation(
+                    bad_rotation.as_rotvec(),
+                    reference_board_pose[1],
+                )[1],
+                visible_markers=2,
+                reprojection_rmse_px=0.1,
+                image_area_px=12000.0,
+                used_single_marker_fallback=False,
+            ),
+            BoardPoseEstimate(
+                rvec=invert_observation(
+                    reference_board_pose[0],
+                    reference_board_pose[1],
+                )[0],
+                tvec=invert_observation(
+                    reference_board_pose[0],
+                    reference_board_pose[1],
+                )[1],
+                visible_markers=2,
+                reprojection_rmse_px=0.2,
+                image_area_px=12000.0,
+                used_single_marker_fallback=False,
+            ),
+        ]
+
+        estimate = board._select_best_candidate(
+            candidates,
+            motion_gate_previous_board_pose=reference_board_pose,
+            candidate_score_previous_board_pose=reference_board_pose,
+            reference_board_pose=reference_board_pose,
+            reference_rotation_gate_deg=15.0,
+            sensor_to_base=np.eye(4, dtype=float),
+            max_position_jump_m=0.5,
+            max_rotation_jump_deg=90.0,
+            max_heading_jump_deg=90.0,
+            front_halfspace_min_z_m=0.05,
+            max_view_angle_deg=85.0,
+            feasible_x_min_m=-5.0,
+            feasible_x_max_m=-0.05,
+            feasible_abs_y_max_m=5.0,
+            feasible_z_min_m=-5.0,
+            feasible_z_max_m=5.0,
+            single_marker_min_score_margin=0.5,
+        )
+
+        self.assertIsNotNone(estimate)
+        estimate_rotation = Rotation.from_rotvec(estimate.board_pose[0])
+        reference_rotation = Rotation.from_rotvec(reference_board_pose[0])
+        rotation_error_deg = np.degrees(
+            (estimate_rotation * reference_rotation.inv()).magnitude()
+        )
+        self.assertLess(rotation_error_deg, 1.0)
 
     def test_multi_marker_motion_gate_timeout_is_decoupled_from_single_marker_prior(self):
         board = _make_board_definition()

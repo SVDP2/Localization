@@ -32,6 +32,7 @@ def save_yaml(path, K, D, rms, width, height):
 
     result = {
         "calibration_date": str(date.today()),
+        "camera_model": "fisheye",
         "camera_matrix": {
             "columns": 3,
             "data": cam_rows,

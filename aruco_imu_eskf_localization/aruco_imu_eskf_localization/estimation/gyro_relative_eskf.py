@@ -199,7 +199,7 @@ class GyroRelativeEskf:
             process_noise_gain @ (accel_noise_var * np.eye(3, dtype=float)) @ process_noise_gain.T
         )
         process_covariance[6:9, 6:9] = (
-            self._gyro_noise_std_radps**2 * dt * dt
+            self._gyro_noise_std_radps**2 * dt
         ) * np.eye(3, dtype=float)
         process_covariance[9:12, 9:12] = (
             self._gyro_bias_random_walk_std_radps2**2 * dt
