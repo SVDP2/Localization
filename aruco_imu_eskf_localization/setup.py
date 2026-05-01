@@ -33,6 +33,10 @@ setup(
             'aruco_imu_eskf_localization.nodes.tf_distance_viz_node:main',
             'pose_rviz_marker_node = '
             'aruco_imu_eskf_localization.nodes.pose_rviz_marker_node:main',
+            'gps_odom_node = '
+            'aruco_imu_eskf_localization.nodes.gps_odom_node:main',
+            'relative_gps_node = '
+            'aruco_imu_eskf_localization.nodes.relative_gps_node:main',
         ],
     },
 )

@@ -4,15 +4,15 @@ aruco_detector_node:
     aruco_dict: DICT_6X6_250                               # 사용할 ArUco 사전
     camera_calibration_file: config/cam_intrinsic.yaml     # 카메라 내부 파라미터 파일
 
-    image_topic: /image_raw                                # 입력 영상 토픽
-    board_pose_topic: /localization/aruco/board_pose       # raw board pose 측정 출력
-    pose_prior_topic: /localization/relative/pose          # ESKF filtered pose prior 입력 토픽
-    debug_image_topic: /localization/aruco/debug_image     # 디버그 오버레이 영상 출력
+    image_topic: image_raw                                 # 입력 영상 토픽
+    board_pose_topic: localization/aruco/board_pose        # raw board pose 측정 출력
+    pose_prior_topic: localization/relative/pose           # ESKF filtered pose prior 입력 토픽
+    debug_image_topic: localization/aruco/debug_image      # 디버그 오버레이 영상 출력
     publish_tf: true                                       # detector 단계의 board->camera TF 출력 여부
 
-    base_frame: base_link                                  # TF lookup에 사용할 차량 바디 프레임 이름
-    camera_frame_id: usb_cam                               # 카메라 프레임 이름
-    board_frame: board                                     # 보드 기준 프레임 이름
+    base_frame: follower/base_link                         # TF lookup에 사용할 차량 바디 프레임 이름
+    camera_frame_id: follower/usb_cam                      # 카메라 프레임 이름
+    board_frame: leader/board                              # 보드 기준 프레임 이름
 
     corner_refinement_method: SUBPIX                       # 코너 refinement 방식
     enable_detected_marker_refinement: true                # board 기반 누락 마커 재탐색 사용 여부
@@ -43,19 +43,21 @@ aruco_detector_node:
 
 aruco_imu_eskf_localization_node:
   ros__parameters:
-    imu_topic: /imu                                        # IMU 입력 토픽
-    board_pose_topic: /localization/aruco/board_pose       # detector raw pose 입력 토픽
+    imu_topic: imu                                         # IMU 입력 토픽
+    board_pose_topic: localization/aruco/board_pose        # detector raw pose 입력 토픽
 
-    odom_topic: /localization/relative/odom                # board 기준 filtered odom 출력
-    pose_topic: /localization/relative/pose                # board 기준 filtered pose 출력
-    leader_rear_odom_topic: /localization/leader_rear/odom # leader_rear 기준 filtered odom 출력
-    leader_rear_pose_topic: /localization/leader_rear/pose # leader_rear 기준 filtered pose 출력
+    odom_topic: localization/relative/odom                 # board 기준 filtered odom 출력
+    pose_topic: localization/relative/pose                 # board 기준 filtered pose 출력
+    leader_rear_odom_topic: localization/leader_rear/odom  # leader_rear 기준 filtered odom 출력
+    leader_rear_pose_topic: localization/leader_rear/pose  # leader_rear 기준 filtered pose 출력
+    gps_relative_odom_topic: localization/gps_relative/odom # GPS 상대 측정 입력 토픽
     publish_tf: true                                       # leader_rear -> base_link TF 출력 여부
+    enable_gps_fusion: false                               # GPS position/velocity fusion 사용 여부
 
-    board_frame: board                                     # 기하학용 board 프레임 이름
-    leader_rear_frame: leader_rear                         # 제어용 leader rear 프레임 이름
-    base_frame: base_link                                  # 차량 바디 프레임 이름
-    camera_frame: usb_cam                                  # 카메라 프레임 이름
+    board_frame: leader/board                              # 기하학용 board 프레임 이름
+    leader_rear_frame: leader/leader_rear                  # 제어용 leader rear 프레임 이름
+    base_frame: follower/base_link                         # 차량 바디 프레임 이름
+    camera_frame: follower/usb_cam                         # 카메라 프레임 이름
 
     base_to_imu_translation: [0.06, 0.0, 0.095]           # base_link -> IMU 평행이동 [m]
     base_to_imu_quaternion_xyzw: [0.0, 0.0, 0.0, 1.0]     # base_link -> IMU 회전 [xyzw]
@@ -79,8 +81,8 @@ aruco_imu_eskf_localization_node:
 
 pose_rviz_marker_node:
   ros__parameters:
-    odom_topic: /localization/leader_rear/odom             # 시각화에 사용할 기준 odom 입력
-    marker_topic: /localization/relative/pose_markers      # RViz MarkerArray 출력
+    odom_topic: localization/leader_rear/odom              # 시각화에 사용할 기준 odom 입력
+    marker_topic: localization/relative/pose_markers       # RViz MarkerArray 출력
     marker_namespace: relative_pose_viz                    # marker namespace
 
     axis_line_width: 0.01                                  # xyz 축 선 두께

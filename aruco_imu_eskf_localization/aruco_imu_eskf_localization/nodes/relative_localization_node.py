@@ -23,6 +23,7 @@ from aruco_imu_eskf_localization.common.frame_conventions import (
 )
 from aruco_imu_eskf_localization.estimation.gyro_relative_eskf import (
     GyroRelativeEskf,
+    GyroRelativeEskfPositionVelocityUpdateResult,
     GyroRelativeEskfSnapshot,
     transform_pose_covariance,
 )
@@ -44,6 +45,12 @@ def _pose_to_matrix(position, quat_xyzw):
 
 def _stamp_to_nanoseconds(stamp) -> int:
     return int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
+
+
+def _parameter_as_bool(value) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in ('1', 'true', 'yes', 'on')
+    return bool(value)
 
 
 @dataclass(frozen=True)
@@ -69,15 +76,21 @@ class RelativeLocalizationNode(Node):
         self.declare_parameter('pose_topic', '/localization/relative/pose')
         self.declare_parameter('leader_rear_odom_topic', '/localization/leader_rear/odom')
         self.declare_parameter('leader_rear_pose_topic', '/localization/leader_rear/pose')
+        self.declare_parameter('gps_relative_odom_topic', 'localization/gps_relative/odom')
         self.declare_parameter('board_frame', 'board')
         self.declare_parameter('leader_rear_frame', 'leader_rear')
         self.declare_parameter('base_frame', 'base_link')
         self.declare_parameter('camera_frame', 'usb_cam')
         self.declare_parameter('publish_tf', True)
+        self.declare_parameter('enable_gps_fusion', False)
         self.declare_parameter('output_rate_hz', 100.0)
         self.declare_parameter('reset_timeout_sec', 1.0)
         self.declare_parameter('vision_delay_buffer_sec', 2.0)
         self.declare_parameter('vision_rotation_gate_deg', 10.0)
+        self.declare_parameter('gps_position_gate_m', 1.5)
+        self.declare_parameter('gps_velocity_gate_mps', 2.0)
+        self.declare_parameter('gps_min_variance', 1.0e-6)
+        self.declare_parameter('gps_max_velocity_variance', 25.0)
         self.declare_parameter('velocity_damping_per_sec', 1.5)
         self.declare_parameter('position_process_noise_std_mps2', 0.3)
         self.declare_parameter('gyro_noise_std_radps', 0.05)
@@ -111,8 +124,13 @@ class RelativeLocalizationNode(Node):
         self._leader_rear_frame = self.get_parameter('leader_rear_frame').value
         self._base_frame = self.get_parameter('base_frame').value
         self._camera_frame = self.get_parameter('camera_frame').value
-        self._publish_tf = bool(self.get_parameter('publish_tf').value)
-        self._use_imu_frame_tf = bool(self.get_parameter('use_imu_frame_tf').value)
+        self._publish_tf = _parameter_as_bool(self.get_parameter('publish_tf').value)
+        self._enable_gps_fusion = _parameter_as_bool(
+            self.get_parameter('enable_gps_fusion').value
+        )
+        self._use_imu_frame_tf = _parameter_as_bool(
+            self.get_parameter('use_imu_frame_tf').value
+        )
         self._output_rate_hz = float(self.get_parameter('output_rate_hz').value)
         self._reset_timeout_sec = float(self.get_parameter('reset_timeout_sec').value)
         self._vision_delay_buffer_sec = float(
@@ -120,6 +138,14 @@ class RelativeLocalizationNode(Node):
         )
         self._vision_rotation_gate_deg = float(
             self.get_parameter('vision_rotation_gate_deg').value
+        )
+        self._gps_position_gate_m = float(max(0.0, self.get_parameter('gps_position_gate_m').value))
+        self._gps_velocity_gate_mps = float(
+            max(0.0, self.get_parameter('gps_velocity_gate_mps').value)
+        )
+        self._gps_min_variance = float(max(1.0e-9, self.get_parameter('gps_min_variance').value))
+        self._gps_max_velocity_variance = float(
+            max(self._gps_min_variance, self.get_parameter('gps_max_velocity_variance').value)
         )
         self._gyro_bias_bootstrap_sec = float(
             self.get_parameter('gyro_bias_bootstrap_sec').value
@@ -163,10 +189,13 @@ class RelativeLocalizationNode(Node):
         self._cached_camera_to_base_tf: np.ndarray | None = None
         self._last_camera_tf_warning_ns: int | None = None
         self._last_vision_stamp_ns: int | None = None
+        self._last_gps_stamp_ns: int | None = None
         self._last_rotation_skip_log_ns: int | None = None
+        self._last_gps_skip_log_ns: int | None = None
 
         board_pose_topic = self.get_parameter('board_pose_topic').value
         imu_topic = self.get_parameter('imu_topic').value
+        gps_relative_odom_topic = self.get_parameter('gps_relative_odom_topic').value
         odom_topic = self.get_parameter('odom_topic').value
         pose_topic = self.get_parameter('pose_topic').value
         leader_rear_odom_topic = self.get_parameter('leader_rear_odom_topic').value
@@ -197,6 +226,12 @@ class RelativeLocalizationNode(Node):
             self._board_pose_callback,
             qos_profile_sensor_data,
         )
+        self.create_subscription(
+            Odometry,
+            gps_relative_odom_topic,
+            self._gps_relative_callback,
+            qos_profile_sensor_data,
+        )
         self._output_timer = self.create_timer(
             1.0 / max(self._output_rate_hz, 1.0),
             self._publish_timer_callback,
@@ -204,7 +239,9 @@ class RelativeLocalizationNode(Node):
 
         self.get_logger().info(f'imu topic: {imu_topic}')
         self.get_logger().info(f'board pose topic: {board_pose_topic}')
+        self.get_logger().info(f'gps relative odom topic: {gps_relative_odom_topic}')
         self.get_logger().info(f'leader_rear odom topic: {leader_rear_odom_topic}')
+        self.get_logger().info(f'gps fusion enabled: {self._enable_gps_fusion}')
         if self._use_imu_frame_tf:
             self.get_logger().info(
                 'resolving IMU rotation from TF using IMU message frame_id when available'
@@ -423,6 +460,160 @@ class RelativeLocalizationNode(Node):
         self._maybe_log_pose_rejection(update_result)
         self._prune_history(max(stamp_ns, self._filter.stamp_ns or stamp_ns))
 
+    def _gps_relative_callback(self, msg: Odometry) -> None:
+        if not self._enable_gps_fusion:
+            return
+        if not self._filter.initialized:
+            return
+
+        stamp_ns = _stamp_to_nanoseconds(msg.header.stamp)
+        frame_id = str(msg.header.frame_id).strip().lstrip('/')
+        expected_frame_id = str(self._leader_rear_frame).strip().lstrip('/')
+        if frame_id != expected_frame_id:
+            self._maybe_log_gps_rejection(
+                f'ignoring GPS relative odom in frame {frame_id!r}; '
+                f'expected {expected_frame_id!r}'
+            )
+            return
+
+        if self._last_gps_stamp_ns is not None and stamp_ns < self._last_gps_stamp_ns:
+            self._maybe_log_gps_rejection(
+                'dropping out-of-order GPS measurement older than the last fused GPS stamp'
+            )
+            return
+
+        measurement = self._gps_measurement_from_odom(msg)
+        if measurement is None:
+            return
+
+        replay_target_ns = self._filter.stamp_ns
+        if replay_target_ns is None:
+            return
+
+        current_snapshot = self._filter.snapshot()
+        if stamp_ns < replay_target_ns:
+            if not self._restore_snapshot_before(stamp_ns):
+                self._maybe_log_gps_rejection(
+                    'dropping delayed GPS measurement outside retained filter history'
+                )
+                return
+            self._predict_filter_to_stamp(stamp_ns)
+            update_result = self._update_filter_from_gps_measurement(measurement)
+            if not update_result.accepted_update:
+                self._filter.restore(current_snapshot)
+                self._maybe_log_gps_rejection(
+                    f'rejected GPS update; position innovation '
+                    f'{update_result.position_innovation_m:.2f} m, velocity innovation '
+                    f'{update_result.velocity_innovation_mps:.2f} m/s'
+                )
+                return
+            self._record_snapshot()
+            self._predict_filter_to_stamp(replay_target_ns)
+            self._record_snapshot()
+        else:
+            self._predict_filter_to_stamp(stamp_ns)
+            update_result = self._update_filter_from_gps_measurement(measurement)
+            if not update_result.accepted_update:
+                self._maybe_log_gps_rejection(
+                    f'rejected GPS update; position innovation '
+                    f'{update_result.position_innovation_m:.2f} m, velocity innovation '
+                    f'{update_result.velocity_innovation_mps:.2f} m/s'
+                )
+                return
+            self._record_snapshot()
+
+        self._last_gps_stamp_ns = stamp_ns
+        self._prune_history(max(stamp_ns, self._filter.stamp_ns or stamp_ns))
+
+    def _gps_measurement_from_odom(
+        self,
+        msg: Odometry,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None] | None:
+        position = np.array(
+            [
+                msg.pose.pose.position.x,
+                msg.pose.pose.position.y,
+                msg.pose.pose.position.z,
+            ],
+            dtype=float,
+        )
+        velocity = np.array(
+            [
+                msg.twist.twist.linear.x,
+                msg.twist.twist.linear.y,
+                msg.twist.twist.linear.z,
+            ],
+            dtype=float,
+        )
+        position_covariance = np.asarray(msg.pose.covariance, dtype=float).reshape(6, 6)[
+            :3,
+            :3,
+        ]
+        velocity_covariance = np.asarray(msg.twist.covariance, dtype=float).reshape(6, 6)[
+            :3,
+            :3,
+        ]
+
+        if not np.isfinite(position).all() or not np.isfinite(position_covariance).all():
+            self._maybe_log_gps_rejection('dropping GPS measurement with non-finite position')
+            return None
+
+        position_covariance = self._sanitize_3x3_covariance(position_covariance)
+        use_velocity = (
+            np.isfinite(velocity).all()
+            and np.isfinite(velocity_covariance).all()
+            and float(np.max(np.diag(velocity_covariance))) <= self._gps_max_velocity_variance
+        )
+        if use_velocity:
+            velocity_covariance = self._sanitize_3x3_covariance(velocity_covariance)
+            return position, position_covariance, velocity, velocity_covariance
+        return position, position_covariance, None, None
+
+    def _sanitize_3x3_covariance(self, covariance: np.ndarray) -> np.ndarray:
+        covariance = 0.5 * (covariance + covariance.T)
+        covariance = np.where(np.isfinite(covariance), covariance, 0.0)
+        for index in range(3):
+            covariance[index, index] = max(float(covariance[index, index]), self._gps_min_variance)
+        return covariance
+
+    def _update_filter_from_gps_measurement(
+        self,
+        measurement: tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None],
+    ):
+        position, position_covariance, velocity, velocity_covariance = measurement
+        snapshot = self._filter.snapshot()
+        position_innovation_m = float(np.linalg.norm(position - snapshot.position_m))
+        if position_innovation_m > self._gps_position_gate_m:
+            return self._gps_rejected_result(
+                position_innovation_m,
+                0.0 if velocity is None else float(np.linalg.norm(velocity - snapshot.velocity_mps)),
+            )
+
+        velocity_innovation_mps = 0.0
+        if velocity is not None:
+            velocity_innovation_mps = float(np.linalg.norm(velocity - snapshot.velocity_mps))
+            if velocity_innovation_mps > self._gps_velocity_gate_mps:
+                return self._gps_rejected_result(position_innovation_m, velocity_innovation_mps)
+
+        return self._filter.update_position_velocity(
+            measured_position_m=position,
+            position_covariance=position_covariance,
+            measured_velocity_mps=velocity,
+            velocity_covariance=velocity_covariance,
+        )
+
+    @staticmethod
+    def _gps_rejected_result(
+        position_innovation_m: float,
+        velocity_innovation_mps: float,
+    ) -> GyroRelativeEskfPositionVelocityUpdateResult:
+        return GyroRelativeEskfPositionVelocityUpdateResult(
+            accepted_update=False,
+            used_velocity_update=False,
+            position_innovation_m=position_innovation_m,
+            velocity_innovation_mps=velocity_innovation_mps,
+        )
+
     def _leader_measurement_from_board_msg(
         self,
         msg: PoseWithCovarianceStamped,
@@ -565,6 +756,17 @@ class RelativeLocalizationNode(Node):
             f'gate {self._vision_rotation_gate_deg:.1f} deg'
         )
         self._last_rotation_skip_log_ns = now_ns
+
+    def _maybe_log_gps_rejection(self, message: str) -> None:
+        now_ns = self.get_clock().now().nanoseconds
+        if (
+            self._last_gps_skip_log_ns is not None
+            and (now_ns - self._last_gps_skip_log_ns) < 1_000_000_000
+        ):
+            return
+
+        self.get_logger().warn(message)
+        self._last_gps_skip_log_ns = now_ns
 
     def _publish_timer_callback(self) -> None:
         if not self._filter.initialized:

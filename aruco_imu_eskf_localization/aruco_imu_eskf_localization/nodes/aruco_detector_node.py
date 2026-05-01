@@ -75,6 +75,12 @@ def _corner_refinement_method(name: str) -> int:
     return int(mapping.get(normalized, mapping['SUBPIX']))
 
 
+def _parameter_as_bool(value) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in ('1', 'true', 'yes', 'on')
+    return bool(value)
+
+
 def select_latest_pose_prior(
     prior_samples: deque[tuple[int, np.ndarray]],
     current_stamp_ns: int,
@@ -211,7 +217,7 @@ class ArucoDetectorNode(Node):
         board_pose_topic = self.get_parameter('board_pose_topic').value
         pose_prior_topic = self.get_parameter('pose_prior_topic').value
         debug_image_topic = self.get_parameter('debug_image_topic').value
-        self.publish_tf = bool(self.get_parameter('publish_tf').value)
+        self.publish_tf = _parameter_as_bool(self.get_parameter('publish_tf').value)
         self.rectify_balance = float(self.get_parameter('rectify_balance').value)
         self.pose_prior_timeout_sec = float(
             self.get_parameter('pose_prior_timeout_sec').value
@@ -220,7 +226,7 @@ class ArucoDetectorNode(Node):
             self.get_parameter('pose_prior_rotation_gate_deg').value
         )
         corner_refinement = self.get_parameter('corner_refinement_method').value
-        self.enable_detected_marker_refinement = bool(
+        self.enable_detected_marker_refinement = _parameter_as_bool(
             self.get_parameter('enable_detected_marker_refinement').value
         )
         self.min_markers_for_board = int(self.get_parameter('min_markers_for_board').value)

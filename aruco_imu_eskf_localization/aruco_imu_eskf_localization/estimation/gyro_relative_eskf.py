@@ -55,6 +55,14 @@ class GyroRelativeEskfUpdateResult:
     rotation_innovation_deg: float
 
 
+@dataclass(frozen=True)
+class GyroRelativeEskfPositionVelocityUpdateResult:
+    accepted_update: bool
+    used_velocity_update: bool
+    position_innovation_m: float
+    velocity_innovation_mps: float
+
+
 class GyroRelativeEskf:
     def __init__(
         self,
@@ -276,6 +284,69 @@ class GyroRelativeEskf:
             used_rotation_update=used_rotation_update,
             position_innovation_m=float(np.linalg.norm(position_residual)),
             rotation_innovation_deg=rotation_residual_deg,
+        )
+
+    def update_position_velocity(
+        self,
+        measured_position_m,
+        position_covariance,
+        measured_velocity_mps=None,
+        velocity_covariance=None,
+    ) -> GyroRelativeEskfPositionVelocityUpdateResult:
+        measured_position_m = np.asarray(measured_position_m, dtype=float).reshape(3)
+        position_covariance = np.asarray(position_covariance, dtype=float).reshape(3, 3)
+        position_residual = measured_position_m - self._position_m
+
+        use_velocity = measured_velocity_mps is not None and velocity_covariance is not None
+        if use_velocity:
+            measured_velocity_mps = np.asarray(measured_velocity_mps, dtype=float).reshape(3)
+            velocity_covariance = np.asarray(velocity_covariance, dtype=float).reshape(3, 3)
+            velocity_residual = measured_velocity_mps - self._velocity_mps
+            innovation = np.concatenate([position_residual, velocity_residual], axis=0)
+            observation = np.zeros((6, 12), dtype=float)
+            observation[0:3, 0:3] = np.eye(3, dtype=float)
+            observation[3:6, 3:6] = np.eye(3, dtype=float)
+            measurement_covariance = np.zeros((6, 6), dtype=float)
+            measurement_covariance[0:3, 0:3] = position_covariance
+            measurement_covariance[3:6, 3:6] = velocity_covariance
+            velocity_innovation_mps = float(np.linalg.norm(velocity_residual))
+        else:
+            innovation = position_residual
+            observation = np.zeros((3, 12), dtype=float)
+            observation[0:3, 0:3] = np.eye(3, dtype=float)
+            measurement_covariance = position_covariance
+            velocity_innovation_mps = 0.0
+
+        measurement_covariance = 0.5 * (
+            measurement_covariance + measurement_covariance.T
+        )
+        measurement_covariance += 1.0e-9 * np.eye(
+            measurement_covariance.shape[0],
+            dtype=float,
+        )
+
+        innovation_covariance = (
+            observation @ self._covariance @ observation.T + measurement_covariance
+        )
+        kalman_gain = self._covariance @ observation.T @ np.linalg.inv(innovation_covariance)
+        kalman_gain[6:12, :] = 0.0
+        delta_state = kalman_gain @ innovation
+
+        self._position_m = self._position_m + delta_state[0:3]
+        self._velocity_mps = self._velocity_mps + delta_state[3:6]
+
+        identity = np.eye(12, dtype=float)
+        covariance_update = identity - kalman_gain @ observation
+        self._covariance = (
+            covariance_update @ self._covariance @ covariance_update.T
+            + kalman_gain @ measurement_covariance @ kalman_gain.T
+        )
+
+        return GyroRelativeEskfPositionVelocityUpdateResult(
+            accepted_update=True,
+            used_velocity_update=use_velocity,
+            position_innovation_m=float(np.linalg.norm(position_residual)),
+            velocity_innovation_mps=velocity_innovation_mps,
         )
 
     def pose_matrix(self) -> np.ndarray:

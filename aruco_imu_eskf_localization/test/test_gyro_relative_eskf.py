@@ -110,6 +110,35 @@ class TestGyroRelativeEskf(unittest.TestCase):
         self.assertTrue(result.used_rotation_update)
         self.assertGreater(snapshot.gyro_bias_radps[2], 0.01)
 
+    def test_position_velocity_update_does_not_change_orientation(self):
+        filter_core = GyroRelativeEskf(
+            initial_position_std_m=1.0,
+            initial_velocity_std_mps=1.0,
+            initial_orientation_std_deg=25.0,
+        )
+        initial_pose = _pose_matrix([0.0, 0.0, 0.0], [30.0, 0.0, 0.0])
+        filter_core.initialize(
+            stamp_ns=0,
+            pose_matrix=initial_pose,
+            measurement_covariance=np.diag([0.5] * 6),
+        )
+
+        result = filter_core.update_position_velocity(
+            measured_position_m=np.array([1.0, 0.5, 0.0], dtype=float),
+            position_covariance=np.diag([0.05, 0.05, 0.2]),
+            measured_velocity_mps=np.array([0.2, 0.0, 0.0], dtype=float),
+            velocity_covariance=np.diag([0.1, 0.1, 0.3]),
+        )
+        yaw_deg = Rotation.from_matrix(filter_core.pose_matrix()[:3, :3]).as_euler(
+            'ZYX',
+            degrees=True,
+        )[0]
+
+        self.assertTrue(result.accepted_update)
+        self.assertTrue(result.used_velocity_update)
+        self.assertAlmostEqual(yaw_deg, 30.0, delta=1.0e-9)
+        self.assertGreater(filter_core.pose_matrix()[0, 3], 0.0)
+
 
 if __name__ == '__main__':
     unittest.main()

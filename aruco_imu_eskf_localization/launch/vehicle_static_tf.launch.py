@@ -1,4 +1,6 @@
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 
@@ -58,10 +60,21 @@ TRANSFORMS = (
         'translation': (0.0, -HALF_TRACK_M, 0.0),
         'quaternion': (0.0, 0.0, 0.0, 1.0),
     },
+    {
+        'name': 'base_link_to_follower_gps_static_tf',
+        'parent': 'base_link',
+        'child': 'follower_gps',
+        'translation': (WHEEL_BASE_M * 0.5, 0.0, 0.190 - WHEEL_RADIUS_M),
+        'quaternion': (0.0, 0.0, 0.0, 1.0),
+    },
 )
 
 
-def _static_tf_node(spec):
+def _prefixed_frame(frame_prefix, frame):
+    return PythonExpression(["'", frame_prefix, "' + '", frame, "'"])
+
+
+def _static_tf_node(spec, frame_prefix):
     tx, ty, tz = spec['translation']
     qx, qy, qz, qw = spec['quaternion']
     return Node(
@@ -77,11 +90,17 @@ def _static_tf_node(spec):
             '--qy', str(qy),
             '--qz', str(qz),
             '--qw', str(qw),
-            '--frame-id', spec['parent'],
-            '--child-frame-id', spec['child'],
+            '--frame-id', _prefixed_frame(frame_prefix, spec['parent']),
+            '--child-frame-id', _prefixed_frame(frame_prefix, spec['child']),
         ],
     )
 
 
 def generate_launch_description():
-    return LaunchDescription([_static_tf_node(spec) for spec in TRANSFORMS])
+    frame_prefix = LaunchConfiguration('frame_prefix')
+    return LaunchDescription(
+        [
+            DeclareLaunchArgument('frame_prefix', default_value='follower/'),
+            *[_static_tf_node(spec, frame_prefix) for spec in TRANSFORMS],
+        ]
+    )
