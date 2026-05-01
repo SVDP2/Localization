@@ -23,6 +23,7 @@ def generate_launch_description():
     enable_pose_viz = LaunchConfiguration('enable_pose_viz')
     enable_gps_odom = LaunchConfiguration('enable_gps_odom')
     enable_relative_gps = LaunchConfiguration('enable_relative_gps')
+    enable_absolute_follower_odom = LaunchConfiguration('enable_absolute_follower_odom')
     enable_gps_fusion = LaunchConfiguration('enable_gps_fusion')
     publish_aruco_tf = LaunchConfiguration('publish_aruco_tf')
     video_device = LaunchConfiguration('video_device')
@@ -56,6 +57,7 @@ def generate_launch_description():
             DeclareLaunchArgument('enable_pose_viz', default_value='true'),
             DeclareLaunchArgument('enable_gps_odom', default_value='true'),
             DeclareLaunchArgument('enable_relative_gps', default_value='true'),
+            DeclareLaunchArgument('enable_absolute_follower_odom', default_value='true'),
             DeclareLaunchArgument('enable_gps_fusion', default_value='false'),
             DeclareLaunchArgument('publish_aruco_tf', default_value='false'),
             DeclareLaunchArgument('video_device', default_value='/dev/video0'),
@@ -183,6 +185,31 @@ def generate_launch_description():
                         'publish_tf': publish_aruco_tf,
                     },
                 ],
+            ),
+            Node(
+                package='aruco_imu_eskf_localization',
+                executable='absolute_follower_odom_node',
+                name='absolute_follower_odom_node',
+                namespace=robot_namespace,
+                output='screen',
+                parameters=[
+                    {
+                        'leader_odom_topic': leader_gps_odom_topic,
+                        'relative_odom_topic': 'localization/leader_rear/odom',
+                        'absolute_odom_topic': 'localization/global/odom',
+                        'map_frame': map_frame,
+                        'leader_base_frame': _prefixed_frame(
+                            leader_frame_prefix,
+                            'base_link',
+                        ),
+                        'leader_rear_frame': _prefixed_frame(
+                            leader_frame_prefix,
+                            'leader_rear',
+                        ),
+                        'follower_base_frame': _prefixed_frame(frame_prefix, 'base_link'),
+                    },
+                ],
+                condition=IfCondition(enable_absolute_follower_odom),
             ),
             Node(
                 package='aruco_imu_eskf_localization',

@@ -37,6 +37,8 @@ setup(
             'aruco_imu_eskf_localization.nodes.gps_odom_node:main',
             'relative_gps_node = '
             'aruco_imu_eskf_localization.nodes.relative_gps_node:main',
+            'absolute_follower_odom_node = '
+            'aruco_imu_eskf_localization.nodes.absolute_follower_odom_node:main',
         ],
     },
 )

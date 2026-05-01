@@ -92,3 +92,15 @@ pose_rviz_marker_node:
 
     good_cov_trace: 0.02                                   # 낮은 covariance 구간 임계값
     warn_cov_trace: 0.12                                   # 경고 covariance 구간 임계값
+
+absolute_follower_odom_node:
+  ros__parameters:
+    leader_odom_topic: /leader/localization/gps/odom       # map -> leader/base_link 입력
+    relative_odom_topic: localization/leader_rear/odom     # leader_rear -> follower/base_link 입력
+    absolute_odom_topic: localization/global/odom          # map -> follower/base_link 출력
+    map_frame: map
+    leader_base_frame: leader/base_link
+    leader_rear_frame: leader/leader_rear
+    follower_base_frame: follower/base_link
+    max_input_age_sec: 0.5
+    min_variance: 1.0e-6
