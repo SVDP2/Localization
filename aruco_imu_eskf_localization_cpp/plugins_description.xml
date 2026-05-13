@@ -1,0 +1,9 @@
+<library path="aruco_imu_eskf_debug_rviz_plugin">
+  <class name="aruco_imu_eskf_localization_cpp/ArucoImuEskfDebugDisplay"
+         type="aruco_imu_eskf_localization_cpp::ArucoImuEskfDebugDisplay"
+         base_class_type="rviz_common::Display">
+    <description>
+      ArUco, IMU, and ESKF debug overlay showing yaw comparison, update gates, and skip reasons.
+    </description>
+  </class>
+</library>

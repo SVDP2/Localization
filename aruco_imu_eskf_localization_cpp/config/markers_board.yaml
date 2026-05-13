@@ -1,0 +1,13 @@
+markers:
+  - id: 0
+    size: 124.0
+  - id: 1
+    size: 124.0
+  - id: 2
+    size: 62.0
+board_geometry:
+  description: "leader rear marker board"
+  marker_positions:
+    0: [-119.0, 93.0, 0.0]
+    1: [119.0, 93.0, 0.0]
+    2: [0.0, 0.0, 0.0]

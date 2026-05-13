@@ -1,0 +1,75 @@
+aruco_detector_node:
+  ros__parameters:
+    marker_config_file: config/markers_board.yaml
+    aruco_dict: DICT_6X6_250
+    camera_calibration_file: config/cam_intrinsic.yaml
+    image_topic: image_raw
+    board_pose_topic: localization/aruco/board_pose
+    pose_prior_topic: localization/relative/pose
+    debug_image_topic: localization/aruco/debug_image
+    base_frame: follower/base_link
+    camera_frame: follower/usb_cam
+    board_frame: leader/board
+    leader_rear_frame: leader/leader_rear
+    publish_tf: false
+    publish_raw_aruco_tf: true
+    raw_aruco_child_frame: follower/base_link_aruco_raw
+    rectify_balance: 0.0
+    min_markers_for_board: 1
+    min_markers_to_initialize: 1
+    max_position_jump_m: 0.35
+    max_rotation_jump_deg: 55.0
+    max_heading_jump_deg: 40.0
+    max_reprojection_rmse_px: 6.0
+    front_halfspace_min_z_m: 0.05
+    max_view_angle_deg: 75.0
+    feasible_x_min_m: -3.50
+    feasible_x_max_m: -0.10
+    feasible_abs_y_max_m: 1.00
+    feasible_z_min_m: -0.50
+    feasible_z_max_m: 0.80
+    pose_prior_timeout_sec: 0.25
+    pose_prior_rotation_gate_deg: 0.0
+
+relative_localization_node:
+  ros__parameters:
+    imu_topic: imu
+    board_pose_topic: localization/aruco/board_pose
+    odom_topic: localization/relative/odom
+    pose_topic: localization/relative/pose
+    leader_rear_odom_topic: localization/leader_rear/odom
+    leader_rear_pose_topic: localization/leader_rear/pose
+    diagnostics_topic: diagnostics
+    board_frame: leader/board
+    leader_rear_frame: leader/leader_rear
+    base_frame: follower/base_link
+    camera_frame: follower/usb_cam
+    publish_tf: true
+    output_rate_hz: 100.0
+    reset_timeout_sec: 1.0
+    vision_delay_buffer_sec: 2.0
+    aruco_position_gate_m: 1.0
+    aruco_position_covariance_scale: 0.35
+    position_smoothing_alpha: 0.55
+    gyro_noise_std_radps: 0.05
+    initial_position_std_m: 0.20
+    initial_orientation_std_deg: 5.0
+    gyro_z_bias_radps: 0.0
+    enable_startup_gyro_bias_calibration: true
+    startup_calibration_duration_sec: 2.0
+    startup_calibration_min_samples: 100
+    startup_calibration_max_abs_gyro_z_radps: 0.05
+    startup_calibration_max_gyro_z_stddev_radps: 0.01
+    require_stationary_for_startup_calibration: true
+
+pose_rviz_marker_node:
+  ros__parameters:
+    odom_topic: localization/leader_rear/odom
+    marker_topic: localization/relative/pose_markers
+    marker_namespace: relative_pose_viz
+    axis_line_width: 0.01
+    text_size: 0.08
+    vehicle_arrow_length: 0.22
+    vehicle_arrow_width: 0.05
+    good_cov_trace: 0.02
+    warn_cov_trace: 0.12
