@@ -1,0 +1,17 @@
+bool connected
+string port
+uint32 baudrate
+string output_mode
+uint16 output_interval_ms
+float64 expected_rate_hz
+float64 actual_rx_rate_hz
+uint64 valid_frame_count
+uint64 parse_error_count
+uint64 checksum_error_count
+uint64 serial_timeout_count
+uint64 reconnect_count
+float64 last_sample_age_ms
+float64 device_timestamp_dt_avg_ms
+float64 device_timestamp_dt_min_ms
+float64 device_timestamp_dt_max_ms
+string last_error
