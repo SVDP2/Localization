@@ -41,12 +41,26 @@ struct OverlayData
   double aruco_position_gate_m{0.0};
   double aruco_position_covariance_scale{1.0};
   double aruco_rotation_innovation_deg{0.0};
+  bool lidar_icp_enabled{false};
+  bool lidar_icp_initialized{false};
+  bool lidar_icp_update_applied{false};
+  bool lidar_icp_recovery_active{false};
+  std::string lidar_icp_update_reason{"disabled"};
+  double lidar_icp_yaw_innovation_rad{0.0};
+  double lidar_icp_yaw_gate_rad{0.0};
   bool detector_pose_published{false};
   int detector_detected_markers{0};
   int detector_known_markers{0};
   int detector_min_markers{0};
   int detector_min_init_markers{0};
   std::string detector_rejection_reason{"not_received"};
+  rclcpp::Time last_odom_receive_time{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time last_imu_receive_time{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time last_diag_receive_time{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time last_detector_change_time{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time last_aruco_change_time{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time last_lidar_change_time{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time last_calibration_change_time{0, 0, RCL_STEADY_TIME};
   double odom_x{0.0};
   double odom_y{0.0};
   double odom_z{0.0};
@@ -80,6 +94,7 @@ private:
   void imu_callback(const sensor_msgs::msg::Imu::ConstSharedPtr msg);
   void diagnostics_callback(const diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr msg);
   void drawWidget(QImage & hud);
+  rclcpp::Time currentTime() const;
 
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
