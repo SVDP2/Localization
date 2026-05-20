@@ -7,6 +7,9 @@
 - Leader와 follower의 GPS 절대위치는 공통 `map` ENU frame에서 계산한다.
 - Follower는 절대 위치와 상대 위치를 둘 다 가진다. 절대 위치는 공통 waypoint/route 진행도 판단에 쓰고, 상대 위치는 leader와의 간격/횡방향 정렬/착 붙는 추종에 쓴다.
 - ESKF fused relative state는 `leader/leader_rear -> follower/base_link` 상대좌표이다. 이것은 platooning gap control의 기준이다.
+- 실내 manual platooning에서 controller가 직접 쓰는 거리는 이 상대좌표를
+  follower 기준으로 변환한 `/platoon/relative_leader/state`의
+  `longitudinal_distance_m`이다.
 - `/follower/localization/global/odom`은 `map -> follower/base_link` 절대좌표이다. 이것은 waypoint follower, RViz global overlay, leader/follower route progress 비교에 쓴다.
 - `map`은 더 이상 단순 debug frame이 아니다. Leader와 follower가 같은 웨이포인트를 로컬에 저장하고 같은 ENU origin을 쓰면 `map`은 route 운용 frame이다.
 - GPS fusion은 ArUco+IMU 상대 localization을 대체하지 않는다. GPS는 상대 position/velocity drift를 줄이는 보조 측정이다.
@@ -64,6 +67,7 @@ Follower namespace는 기본 `follower`이다. 절대 토픽을 피하고, follo
 | `/follower/localization/leader_rear/odom` | `nav_msgs/Odometry` | ESKF | controller/debug | fused relative odom |
 | `/follower/localization/leader_rear/pose` | `geometry_msgs/PoseWithCovarianceStamped` | ESKF | debug | fused relative pose |
 | `/follower/localization/global/odom` | `nav_msgs/Odometry` | absolute follower odom node | waypoint/RViz/debug | `map -> follower/base_link` |
+| `/platoon/relative_leader/state` | `platoon_interfaces/RelativeLeaderState` | comm/localization bridge | follower longitudinal controller | follower 기준 leader pose, distance, V2V motion/safety를 합친 canonical control reference |
 
 `/follower/localization/gps/odom`과 `/leader/localization/gps/odom`의 `twist.linear`는 `map` ENU frame 성분으로 해석한다. `twist.angular`가 제공되는 경우에는 각 차량의 `child_frame_id` frame 성분으로 해석한다.
 
@@ -289,3 +293,31 @@ ros2 topic echo /follower/localization/gps_relative/odom --once
 Overlay에서 fused와 GPS relative가 장시간 일정한 offset을 보이면 lever-arm, leader rear offset, map origin, camera extrinsic 순서로 확인한다. Offset이 천천히 커지면 GPS covariance/gate 또는 leader/follower time sync를 확인한다. 순간적으로 튀면 `NavSatFix` covariance, RTK 상태, NTRIP 연결 상태를 먼저 확인한다.
 
 Global overlay에서 leader와 follower가 같은 waypoint line 위에 있어야 하고, relative overlay에서 follower가 leader rear 기준 목표 간격에 있어야 한다. 둘 중 하나만 맞는 상태는 정상 platooning으로 보지 않는다.
+
+## 10. 2026-05-20 manual platooning 계약
+
+현재 실내 수동 리더 추종 모드는 GPS 없이 다음 경로를 사용한다.
+
+```text
+/follower/localization/leader_rear/odom
+  + /v2v/leader/motion_state
+  + /v2v/leader/safety_state
+  + /v2v/leader/heartbeat
+  -> /platoon/relative_leader/state
+  -> signed_sync longitudinal controller
+```
+
+관측된 거리 기준:
+
+```text
+visual bumper-to-bumper gap: about 15 cm
+/platoon/relative_leader/state.longitudinal_distance_m: about 0.56-0.60 m
+controller target: 0.58 m
+```
+
+주의사항:
+
+- `0.58 m`는 bumper gap이 아니라 follower `base_link`에서 leader rear board까지의 control reference 거리이다.
+- ArUco detector의 `motion_position_gate` warning은 pose jump reject를 의미한다. 오늘 ideal spacing 부근에서는 안정적이었지만, RViz/AnyDesk로 image overlay와 marker pose를 같이 확인해야 한다.
+- 싼 IMU의 gyro drift와 ArUco dropout을 보완하기 위해 다음 단계는 ArUco seed 주변 3D LiDAR cluster/range fusion이다.
+- Controller는 fusion 방식을 몰라야 한다. Fusion node는 계속 `/platoon/relative_leader/state` 계약을 만족해야 한다.

@@ -8,6 +8,10 @@
 
 - leader 차량 정지 상태에서 follower의 상대 위치/자세를 안정적으로 추정
 - 100 Hz gyro-led 예측 + 카메라 프레임율 vision update
+- 2026-05-20 manual platooning 실차 테스트에서
+  `/follower/localization/leader_rear/odom`이 `/platoon/relative_leader/state`
+  생성을 거쳐 follower signed-sync longitudinal controller의 실제 거리
+  reference로 사용됨
 
 ---
 
@@ -193,7 +197,8 @@ python3 -m pytest test/ -v
 
 | 항목 | 현재 상태 | 개선 방향 |
 |------|-----------|-----------|
-| **leader motion compensation** | leader 정지 가정 | V2V 통신으로 leader yaw rate/speed를 받아 상대 dynamics 보정 |
+| **leader motion compensation** | V2V leader speed/yaw-rate가 controller reference에는 연결됨, ESKF dynamics에는 아직 제한적 | V2V 통신으로 leader yaw rate/speed를 받아 상대 dynamics 보정 |
+| **LiDAR range fusion** | 미구현 | ArUco pose를 leader identity/ROI seed로 쓰고 3D LiDAR cluster/range로 거리 안정화 |
 | **wheel odom / vehicle speed** | 미사용 | follower wheel odom 통합으로 pure rotation vs translation 구분, ZUPT/NHC 적용 |
 | **ESKF C++ 이전** | Python 구현 | moving leader 단계부터 deterministic latency가 중요해지므로 C++ backend 권장 |
 | **timestamp alignment 강화** | 2초 replay buffer | moving leader에서는 vision 지연이 상대 위치 오차로 직결, 더 정밀한 시간 보상 필요 |
@@ -260,3 +265,4 @@ python3 calibrate.py --device /dev/video0 --output cam_intrinsic.yaml
 | IMU 결합 | gyro-led ESKF 도입, 100 Hz 예측 출력, IMU TF lookup |
 | fusion 강화 | rotation gate 초과 시 full reject, anisotropic covariance, single-marker 비활성, prior timeout 분리, dead code 제거 |
 | rectification + prior | fisheye rectification 도입, ESKF pose -> detector prior 피드백, camera extrinsic TF 통합, orientation process noise 수정, iterative refinement + reference rotation gate |
+| manual platooning 연결 | `/follower/localization/leader_rear/odom`을 V2V motion/safety와 합쳐 `/platoon/relative_leader/state`로 변환하고, signed-sync controller가 target distance 약 0.58m 기준으로 duty shaping |
