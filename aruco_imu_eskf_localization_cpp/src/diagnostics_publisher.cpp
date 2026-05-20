@@ -57,6 +57,36 @@ diagnostic_msgs::msg::DiagnosticArray DiagnosticsPublisher::build(
   add_key_value(status, "gyro_bias_valid", input.gyro_bias_valid ? "true" : "false");
   add_key_value(status, "stationary_detected", input.stationary_detected ? "true" : "false");
   add_key_value(status, "calibration_status", input.calibration_status);
+  add_key_value(status, "lidar_icp_enabled", input.lidar_icp_enabled ? "true" : "false");
+  add_key_value(
+    status, "lidar_icp_initialized", input.lidar_icp_initialized ? "true" : "false");
+  add_key_value(
+    status, "lidar_icp_update_applied",
+    input.lidar_icp_update_applied ? "true" : "false");
+  add_key_value(status, "lidar_icp_update_reason", input.lidar_icp_update_reason);
+  add_key_value(status, "lidar_icp_source_points", std::to_string(input.lidar_icp_source_points));
+  add_key_value(status, "lidar_icp_dt_ms", std::to_string(input.lidar_icp_dt_ms));
+  add_key_value(
+    status, "lidar_icp_yaw_delta_rad", std::to_string(input.lidar_icp_yaw_delta_rad));
+  add_key_value(
+    status, "lidar_icp_yaw_rate_radps", std::to_string(input.lidar_icp_yaw_rate_radps));
+  add_key_value(
+    status, "lidar_icp_yaw_innovation_rad",
+    std::to_string(input.lidar_icp_yaw_innovation_rad));
+  add_key_value(
+    status, "lidar_icp_yaw_gate_rad", std::to_string(input.lidar_icp_yaw_gate_rad));
+  add_key_value(
+    status, "lidar_icp_yaw_variance_rad2",
+    std::to_string(input.lidar_icp_yaw_variance_rad2));
+  add_key_value(
+    status, "lidar_icp_recovery_active",
+    input.lidar_icp_recovery_active ? "true" : "false");
+  add_key_value(
+    status, "lidar_icp_recovery_yaw_gate_rejects",
+    std::to_string(input.lidar_icp_recovery_yaw_gate_rejects));
+  add_key_value(
+    status, "lidar_icp_recovery_stable_samples",
+    std::to_string(input.lidar_icp_recovery_stable_samples));
   add_key_value(status, "last_skip_reason", input.last_skip_reason);
 
   array.status.push_back(status);

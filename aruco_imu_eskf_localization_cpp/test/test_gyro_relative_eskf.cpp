@@ -74,3 +74,48 @@ TEST(GyroRelativeEskf, PositionGateRejectsLargeArucoJump)
   EXPECT_EQ(result.reason, "position_gate");
   EXPECT_NEAR(filter.pose_matrix().translation().x(), 0.0, 1.0e-12);
 }
+
+TEST(GyroRelativeEskf, YawUpdateCorrectsGyroDrift)
+{
+  GyroRelativeEskf filter;
+  filter.initialize_position_only(
+    0, Eigen::Vector3d::Zero(), 0.1 * Eigen::Matrix3d::Identity());
+  filter.predict(1000000000LL, Eigen::Vector3d(0.0, 0.0, 0.3));
+
+  const double yaw_before = yaw_from_quaternion(Eigen::Quaterniond(filter.pose_matrix().linear()));
+  const auto result = filter.update_yaw(0.1, 0.01, 0.5);
+  const double yaw_after = yaw_from_quaternion(Eigen::Quaterniond(filter.pose_matrix().linear()));
+
+  EXPECT_TRUE(result.accepted);
+  EXPECT_NEAR(result.yaw_innovation_rad, -0.2, 1.0e-12);
+  EXPECT_LT(std::abs(yaw_after - 0.1), std::abs(yaw_before - 0.1));
+}
+
+TEST(GyroRelativeEskf, YawGateRejectsLargeInnovation)
+{
+  GyroRelativeEskf filter;
+  filter.initialize_position_only(
+    0, Eigen::Vector3d::Zero(), 0.1 * Eigen::Matrix3d::Identity());
+  filter.predict(1000000000LL, Eigen::Vector3d(0.0, 0.0, 0.1));
+
+  const double yaw_before = yaw_from_quaternion(Eigen::Quaterniond(filter.pose_matrix().linear()));
+  const auto result = filter.update_yaw(1.0, 0.01, 0.2);
+  const double yaw_after = yaw_from_quaternion(Eigen::Quaterniond(filter.pose_matrix().linear()));
+
+  EXPECT_FALSE(result.accepted);
+  EXPECT_EQ(result.reason, "yaw_gate");
+  EXPECT_NEAR(yaw_before, yaw_after, 1.0e-12);
+}
+
+TEST(GyroRelativeEskf, YawUpdateWrapsInnovationAcrossPi)
+{
+  GyroRelativeEskf filter;
+  filter.initialize_position_only(
+    0, Eigen::Vector3d::Zero(), 0.1 * Eigen::Matrix3d::Identity());
+  filter.predict(1000000000LL, Eigen::Vector3d(0.0, 0.0, 3.13));
+
+  const auto result = filter.update_yaw(-3.13, 0.01, 0.1);
+
+  EXPECT_TRUE(result.accepted);
+  EXPECT_NEAR(result.yaw_innovation_rad, 0.0231853071795864, 1.0e-9);
+}

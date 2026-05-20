@@ -40,6 +40,7 @@ relative_localization_node:
     leader_rear_odom_topic: localization/leader_rear/odom
     leader_rear_pose_topic: localization/leader_rear/pose
     diagnostics_topic: diagnostics
+    lidar_scan_topic: /follower/scan
     board_frame: leader/board
     leader_rear_frame: leader/leader_rear
     base_frame: follower/base_link
@@ -61,6 +62,28 @@ relative_localization_node:
     startup_calibration_max_abs_gyro_z_radps: 0.05
     startup_calibration_max_gyro_z_stddev_radps: 0.01
     require_stationary_for_startup_calibration: true
+    enable_lidar_icp_yaw: true
+    lidar_icp_min_range_m: 0.15
+    lidar_icp_max_range_m: 8.0
+    lidar_icp_min_source_points: 80
+    lidar_icp_yaw_var_rad2: 0.05
+    lidar_icp_yaw_gate_deg: 12.0
+    lidar_icp_max_abs_yaw_rate_radps: 1.5
+    lidar_icp_voxel_size_m: 0.10
+    lidar_icp_max_points_per_voxel: 20
+    lidar_icp_max_num_iterations: 80
+    lidar_icp_convergence_criterion: 0.0001
+    lidar_icp_exclude_leader_box: true
+    lidar_icp_exclude_x_min_m: 0.10
+    lidar_icp_exclude_x_max_m: 4.00
+    lidar_icp_exclude_abs_y_max_m: 1.00
+    enable_lidar_icp_yaw_recovery: true
+    lidar_icp_recovery_min_yaw_gate_rejects: 5
+    lidar_icp_recovery_min_stable_samples: 5
+    lidar_icp_recovery_yaw_gate_deg: 45.0
+    lidar_icp_recovery_max_step_deg: 3.0
+    lidar_icp_recovery_yaw_var_scale: 8.0
+    lidar_icp_recovery_max_yaw_rate_delta_radps: 0.35
 
 pose_rviz_marker_node:
   ros__parameters:

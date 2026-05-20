@@ -37,6 +37,16 @@ struct PositionUpdateResult
   std::string reason{"not_initialized"};
 };
 
+struct YawUpdateResult
+{
+  bool accepted{false};
+  bool initialized{false};
+  double yaw_innovation_rad{0.0};
+  double yaw_gate_rad{0.0};
+  double yaw_variance_rad2{0.0};
+  std::string reason{"not_initialized"};
+};
+
 class GyroRelativeEskf
 {
 public:
@@ -57,6 +67,10 @@ public:
     const Eigen::Vector3d & measured_position_m,
     const Eigen::Matrix3d & position_covariance,
     double gate_m);
+  YawUpdateResult update_yaw(
+    double measured_yaw_rad,
+    double yaw_variance_rad2,
+    double gate_rad);
 
   Eigen::Isometry3d pose_matrix() const;
   Eigen::Matrix<double, 6, 6> pose_covariance() const;

@@ -7,6 +7,15 @@
 
 namespace aruco_imu_eskf_localization_cpp
 {
+namespace
+{
+
+double wrap_to_pi(double angle_rad)
+{
+  return std::atan2(std::sin(angle_rad), std::cos(angle_rad));
+}
+
+}  // namespace
 
 GyroRelativeEskf::GyroRelativeEskf(const GyroRelativeEskfOptions & options)
 : options_(options)
@@ -128,6 +137,60 @@ PositionUpdateResult GyroRelativeEskf::update_position(
   result.accepted = true;
   result.initialized = true;
   result.reason = "aruco_position_smoothing";
+  return result;
+}
+
+YawUpdateResult GyroRelativeEskf::update_yaw(
+  double measured_yaw_rad,
+  double yaw_variance_rad2,
+  double gate_rad)
+{
+  YawUpdateResult result;
+  result.yaw_gate_rad = gate_rad;
+  result.yaw_variance_rad2 = yaw_variance_rad2;
+  if (!initialized_) {
+    result.reason = "not_initialized";
+    return result;
+  }
+  if (!std::isfinite(measured_yaw_rad) || !std::isfinite(yaw_variance_rad2) ||
+    !(yaw_variance_rad2 > 0.0))
+  {
+    result.reason = "invalid_measurement";
+    return result;
+  }
+
+  const double yaw_pred = yaw_from_quaternion(rotation_);
+  const double residual = wrap_to_pi(measured_yaw_rad - yaw_pred);
+  result.yaw_innovation_rad = residual;
+  if (gate_rad > 0.0 && std::abs(residual) > gate_rad) {
+    result.reason = "yaw_gate";
+    return result;
+  }
+
+  const double s = covariance_(2, 2) + yaw_variance_rad2;
+  if (!std::isfinite(s) || !(s > 0.0)) {
+    result.reason = "invalid_covariance";
+    return result;
+  }
+
+  const Eigen::Vector3d k = covariance_.col(2) / s;
+  position_m_.head<2>() += k.head<2>() * residual;
+  position_m_.z() = 0.0;
+
+  const double yaw = wrap_to_pi(yaw_pred + k.z() * residual);
+  rotation_ = Eigen::Quaterniond(Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()));
+
+  const Eigen::Matrix3d i_kh =
+    Eigen::Matrix3d::Identity() - k * Eigen::RowVector3d(0.0, 0.0, 1.0);
+  covariance_ = i_kh * covariance_ * i_kh.transpose() + yaw_variance_rad2 * (k * k.transpose());
+  covariance_ = 0.5 * (covariance_ + covariance_.transpose());
+  covariance_(0, 0) = std::max(covariance_(0, 0), options_.min_position_variance);
+  covariance_(1, 1) = std::max(covariance_(1, 1), options_.min_position_variance);
+  covariance_(2, 2) = std::max(covariance_(2, 2), 1.0e-9);
+
+  result.accepted = true;
+  result.initialized = true;
+  result.reason = "yaw_update";
   return result;
 }
 

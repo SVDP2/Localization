@@ -27,6 +27,20 @@ struct ArucoImuEskfDiagnostics
   bool gyro_bias_valid{false};
   bool stationary_detected{false};
   std::string calibration_status{"disabled"};
+  bool lidar_icp_enabled{false};
+  bool lidar_icp_initialized{false};
+  bool lidar_icp_update_applied{false};
+  std::string lidar_icp_update_reason{"disabled"};
+  int lidar_icp_source_points{0};
+  double lidar_icp_dt_ms{0.0};
+  double lidar_icp_yaw_delta_rad{0.0};
+  double lidar_icp_yaw_rate_radps{0.0};
+  double lidar_icp_yaw_innovation_rad{0.0};
+  double lidar_icp_yaw_gate_rad{0.0};
+  double lidar_icp_yaw_variance_rad2{0.0};
+  bool lidar_icp_recovery_active{false};
+  int lidar_icp_recovery_yaw_gate_rejects{0};
+  int lidar_icp_recovery_stable_samples{0};
   std::string last_skip_reason{"none"};
 };
 

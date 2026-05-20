@@ -16,6 +16,7 @@ find_package(cv_bridge REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(kiss_icp REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc calib3d aruco)
 find_package(pluginlib REQUIRED)
@@ -29,6 +30,8 @@ find_package(std_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_eigen REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(Sophus REQUIRED CONFIG)
+find_package(TBB REQUIRED CONFIG)
 find_package(visualization_msgs REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
@@ -77,11 +80,13 @@ target_link_libraries(relative_localization_node ${PROJECT_NAME}_core)
 ament_target_dependencies(relative_localization_node
   diagnostic_msgs
   geometry_msgs
+  kiss_icp
   nav_msgs
   rclcpp
   sensor_msgs
   tf2_ros
 )
+target_link_libraries(relative_localization_node kiss_icp::kiss_icp_pipeline)
 
 add_executable(pose_rviz_marker_node src/nodes/pose_rviz_marker_node.cpp)
 target_link_libraries(pose_rviz_marker_node ${PROJECT_NAME}_core)

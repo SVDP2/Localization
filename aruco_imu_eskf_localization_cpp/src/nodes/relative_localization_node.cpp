@@ -8,6 +8,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/qos.hpp>
+#include <sensor_msgs/msg/laser_scan.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <tf2/time.h>
 #include <tf2_ros/buffer.h>
@@ -15,12 +16,16 @@
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/transform_listener.h>
 
+#include <kiss_icp/pipeline/KissICP.hpp>
+#include <sophus/se3.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <deque>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace aruco_imu_eskf_localization_cpp
 {
@@ -50,6 +55,16 @@ Eigen::Matrix<double, 6, 6> covariance_from_msg(
     }
   }
   return cov;
+}
+
+double wrap_to_pi(double angle_rad)
+{
+  return std::atan2(std::sin(angle_rad), std::cos(angle_rad));
+}
+
+double yaw_from_rotation(const Eigen::Matrix3d & rotation)
+{
+  return std::atan2(rotation(1, 0), rotation(0, 0));
 }
 
 }  // namespace
@@ -82,6 +97,7 @@ public:
     declare_parameter("leader_rear_odom_topic", "localization/leader_rear/odom");
     declare_parameter("leader_rear_pose_topic", "localization/leader_rear/pose");
     declare_parameter("diagnostics_topic", "diagnostics");
+    declare_parameter("lidar_scan_topic", "/follower/scan");
     declare_parameter("board_frame", "leader/board");
     declare_parameter("leader_rear_frame", "leader/leader_rear");
     declare_parameter("base_frame", "follower/base_link");
@@ -103,6 +119,28 @@ public:
     declare_parameter("startup_calibration_max_abs_gyro_z_radps", 0.05);
     declare_parameter("startup_calibration_max_gyro_z_stddev_radps", 0.01);
     declare_parameter("require_stationary_for_startup_calibration", true);
+    declare_parameter("enable_lidar_icp_yaw", true);
+    declare_parameter("lidar_icp_min_range_m", 0.15);
+    declare_parameter("lidar_icp_max_range_m", 8.0);
+    declare_parameter("lidar_icp_min_source_points", 80);
+    declare_parameter("lidar_icp_yaw_var_rad2", 0.05);
+    declare_parameter("lidar_icp_yaw_gate_deg", 12.0);
+    declare_parameter("lidar_icp_max_abs_yaw_rate_radps", 1.5);
+    declare_parameter("lidar_icp_voxel_size_m", 0.10);
+    declare_parameter("lidar_icp_max_points_per_voxel", 20);
+    declare_parameter("lidar_icp_max_num_iterations", 80);
+    declare_parameter("lidar_icp_convergence_criterion", 0.0001);
+    declare_parameter("lidar_icp_exclude_leader_box", true);
+    declare_parameter("lidar_icp_exclude_x_min_m", 0.10);
+    declare_parameter("lidar_icp_exclude_x_max_m", 4.00);
+    declare_parameter("lidar_icp_exclude_abs_y_max_m", 1.00);
+    declare_parameter("enable_lidar_icp_yaw_recovery", true);
+    declare_parameter("lidar_icp_recovery_min_yaw_gate_rejects", 5);
+    declare_parameter("lidar_icp_recovery_min_stable_samples", 5);
+    declare_parameter("lidar_icp_recovery_yaw_gate_deg", 45.0);
+    declare_parameter("lidar_icp_recovery_max_step_deg", 3.0);
+    declare_parameter("lidar_icp_recovery_yaw_var_scale", 8.0);
+    declare_parameter("lidar_icp_recovery_max_yaw_rate_delta_radps", 0.35);
 
     board_frame_ = get_parameter("board_frame").as_string();
     leader_rear_frame_ = get_parameter("leader_rear_frame").as_string();
@@ -129,6 +167,42 @@ public:
       get_parameter("require_stationary_for_startup_calibration").as_bool();
     gyro_bias_valid_ = !enable_startup_gyro_bias_calibration_;
     calibration_status_ = enable_startup_gyro_bias_calibration_ ? "collecting" : "disabled";
+    enable_lidar_icp_yaw_ = get_parameter("enable_lidar_icp_yaw").as_bool();
+    lidar_icp_min_range_m_ =
+      std::max(get_parameter("lidar_icp_min_range_m").as_double(), 0.0);
+    lidar_icp_max_range_m_ =
+      std::max(get_parameter("lidar_icp_max_range_m").as_double(), lidar_icp_min_range_m_);
+    lidar_icp_min_source_points_ =
+      static_cast<int>(
+        std::max<int64_t>(get_parameter("lidar_icp_min_source_points").as_int(), 1));
+    lidar_icp_yaw_var_rad2_ =
+      std::max(get_parameter("lidar_icp_yaw_var_rad2").as_double(), 1.0e-6);
+    lidar_icp_yaw_gate_rad_ =
+      std::max(get_parameter("lidar_icp_yaw_gate_deg").as_double(), 0.0) * M_PI / 180.0;
+    lidar_icp_max_abs_yaw_rate_radps_ =
+      std::max(get_parameter("lidar_icp_max_abs_yaw_rate_radps").as_double(), 0.0);
+    lidar_icp_exclude_leader_box_ =
+      get_parameter("lidar_icp_exclude_leader_box").as_bool();
+    lidar_icp_exclude_x_min_m_ = get_parameter("lidar_icp_exclude_x_min_m").as_double();
+    lidar_icp_exclude_x_max_m_ = get_parameter("lidar_icp_exclude_x_max_m").as_double();
+    lidar_icp_exclude_abs_y_max_m_ =
+      std::max(get_parameter("lidar_icp_exclude_abs_y_max_m").as_double(), 0.0);
+    enable_lidar_icp_yaw_recovery_ =
+      get_parameter("enable_lidar_icp_yaw_recovery").as_bool();
+    lidar_icp_recovery_min_yaw_gate_rejects_ = static_cast<int>(
+      std::max<int64_t>(get_parameter("lidar_icp_recovery_min_yaw_gate_rejects").as_int(), 1));
+    lidar_icp_recovery_min_stable_samples_ = static_cast<int>(
+      std::max<int64_t>(get_parameter("lidar_icp_recovery_min_stable_samples").as_int(), 1));
+    lidar_icp_recovery_yaw_gate_rad_ =
+      std::max(get_parameter("lidar_icp_recovery_yaw_gate_deg").as_double(), 0.0) *
+      M_PI / 180.0;
+    lidar_icp_recovery_max_step_rad_ =
+      std::max(get_parameter("lidar_icp_recovery_max_step_deg").as_double(), 0.0) *
+      M_PI / 180.0;
+    lidar_icp_recovery_yaw_var_scale_ =
+      std::max(get_parameter("lidar_icp_recovery_yaw_var_scale").as_double(), 1.0);
+    lidar_icp_recovery_max_yaw_rate_delta_radps_ =
+      std::max(get_parameter("lidar_icp_recovery_max_yaw_rate_delta_radps").as_double(), 0.0);
 
     GyroRelativeEskfOptions filter_options;
     filter_options.position_smoothing_alpha = get_parameter("position_smoothing_alpha").as_double();
@@ -137,6 +211,21 @@ public:
     filter_options.initial_orientation_std_deg = get_parameter("initial_orientation_std_deg").as_double();
     filter_ = std::make_unique<GyroRelativeEskf>(filter_options);
     filter_options_ = filter_options;
+
+    if (enable_lidar_icp_yaw_) {
+      kiss_icp::pipeline::KISSConfig config;
+      config.deskew = false;
+      config.min_range = lidar_icp_min_range_m_;
+      config.max_range = lidar_icp_max_range_m_;
+      config.voxel_size = std::max(get_parameter("lidar_icp_voxel_size_m").as_double(), 0.01);
+      config.max_points_per_voxel = static_cast<int>(
+        std::max<int64_t>(get_parameter("lidar_icp_max_points_per_voxel").as_int(), 1));
+      config.max_num_iterations = static_cast<int>(
+        std::max<int64_t>(get_parameter("lidar_icp_max_num_iterations").as_int(), 1));
+      config.convergence_criterion =
+        std::max(get_parameter("lidar_icp_convergence_criterion").as_double(), 1.0e-8);
+      lidar_icp_ = std::make_unique<kiss_icp::pipeline::KissICP>(config);
+    }
 
     board_odom_pub_ = create_publisher<nav_msgs::msg::Odometry>(
       get_parameter("odom_topic").as_string(), 10);
@@ -161,6 +250,11 @@ public:
     board_pose_sub_ = create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
       get_parameter("board_pose_topic").as_string(), rclcpp::SensorDataQoS(),
       [this](geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr msg) {board_pose_callback(msg);});
+    if (enable_lidar_icp_yaw_) {
+      lidar_scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
+        get_parameter("lidar_scan_topic").as_string(), rclcpp::SensorDataQoS(),
+        [this](sensor_msgs::msg::LaserScan::ConstSharedPtr msg) {lidar_scan_callback(msg);});
+    }
 
     const double output_rate = std::max(get_parameter("output_rate_hz").as_double(), 1.0);
     output_timer_ = create_wall_timer(
@@ -170,7 +264,10 @@ public:
       std::chrono::milliseconds(100),
       [this]() {publish_diagnostics();});
 
-    RCLCPP_INFO(get_logger(), "C++ ArUco+IMU ESKF running with translation-only ArUco updates");
+    RCLCPP_INFO(
+      get_logger(),
+      "C++ ArUco+IMU ESKF running with translation-only ArUco updates and LiDAR ICP yaw=%s",
+      enable_lidar_icp_yaw_ ? "enabled" : "disabled");
     RCLCPP_INFO(
       get_logger(),
       "startup gyro-z calibration: enabled=%s manual_bias=%.6f duration=%.2fs min_samples=%d "
@@ -225,6 +322,123 @@ private:
         base_frame_.c_str(), camera_frame_.c_str(), e.what());
       return std::nullopt;
     }
+  }
+
+  std::optional<Eigen::Isometry3d> base_from_lidar(const std::string & lidar_frame)
+  {
+    const std::string frame = lidar_frame.empty() ? base_frame_ : lidar_frame;
+    if (cached_lidar_frame_ == frame && cached_base_from_lidar_) {
+      return cached_base_from_lidar_;
+    }
+    if (frame == base_frame_) {
+      cached_lidar_frame_ = frame;
+      cached_base_from_lidar_ = Eigen::Isometry3d::Identity();
+      return cached_base_from_lidar_;
+    }
+    try {
+      const auto tf = tf_buffer_.lookupTransform(base_frame_, frame, tf2::TimePointZero);
+      cached_lidar_frame_ = frame;
+      cached_base_from_lidar_ = transform_from_msg(tf);
+      return cached_base_from_lidar_;
+    } catch (const std::exception & e) {
+      set_lidar_icp_skip_reason("lidar_tf_unavailable");
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 1000, "LiDAR TF %s <- %s unavailable: %s",
+        base_frame_.c_str(), frame.c_str(), e.what());
+      return std::nullopt;
+    }
+  }
+
+  bool point_in_lidar_icp_exclusion_box(const Eigen::Vector3d & point_base) const
+  {
+    if (!lidar_icp_exclude_leader_box_) {
+      return false;
+    }
+    const double x_min = std::min(lidar_icp_exclude_x_min_m_, lidar_icp_exclude_x_max_m_);
+    const double x_max = std::max(lidar_icp_exclude_x_min_m_, lidar_icp_exclude_x_max_m_);
+    return point_base.x() >= x_min && point_base.x() <= x_max &&
+           std::abs(point_base.y()) <= lidar_icp_exclude_abs_y_max_m_;
+  }
+
+  void set_lidar_icp_skip_reason(const std::string & reason)
+  {
+    diag_.lidar_icp_update_applied = false;
+    diag_.lidar_icp_update_reason = reason;
+    diag_.last_skip_reason = "lidar_icp_" + reason;
+  }
+
+  void reset_lidar_icp_recovery()
+  {
+    lidar_icp_yaw_gate_rejects_ = 0;
+    lidar_icp_recovery_stable_samples_ = 0;
+    lidar_icp_recovery_active_ = false;
+    diag_.lidar_icp_recovery_active = false;
+    diag_.lidar_icp_recovery_yaw_gate_rejects = 0;
+    diag_.lidar_icp_recovery_stable_samples = 0;
+  }
+
+  void update_lidar_icp_recovery_diagnostics()
+  {
+    diag_.lidar_icp_recovery_active = lidar_icp_recovery_active_;
+    diag_.lidar_icp_recovery_yaw_gate_rejects = lidar_icp_yaw_gate_rejects_;
+    diag_.lidar_icp_recovery_stable_samples = lidar_icp_recovery_stable_samples_;
+  }
+
+  YawUpdateResult update_lidar_icp_yaw_with_recovery(
+    double measured_yaw,
+    bool stable_recovery_sample)
+  {
+    auto update = filter_->update_yaw(measured_yaw, lidar_icp_yaw_var_rad2_, lidar_icp_yaw_gate_rad_);
+    if (update.accepted) {
+      reset_lidar_icp_recovery();
+      return update;
+    }
+    if (update.reason != "yaw_gate") {
+      reset_lidar_icp_recovery();
+      return update;
+    }
+
+    ++lidar_icp_yaw_gate_rejects_;
+    if (stable_recovery_sample) {
+      ++lidar_icp_recovery_stable_samples_;
+    } else {
+      lidar_icp_recovery_stable_samples_ = 0;
+      lidar_icp_recovery_active_ = false;
+    }
+
+    const bool recovery_ready =
+      enable_lidar_icp_yaw_recovery_ &&
+      stable_recovery_sample &&
+      lidar_icp_yaw_gate_rejects_ >= lidar_icp_recovery_min_yaw_gate_rejects_ &&
+      lidar_icp_recovery_stable_samples_ >= lidar_icp_recovery_min_stable_samples_ &&
+      std::abs(update.yaw_innovation_rad) <= lidar_icp_recovery_yaw_gate_rad_ &&
+      lidar_icp_recovery_max_step_rad_ > 0.0;
+
+    if (!recovery_ready) {
+      update_lidar_icp_recovery_diagnostics();
+      return update;
+    }
+
+    const double yaw_pred =
+      yaw_from_quaternion(Eigen::Quaterniond(filter_->pose_matrix().linear()));
+    const double limited_residual = std::clamp(
+      update.yaw_innovation_rad,
+      -lidar_icp_recovery_max_step_rad_,
+      lidar_icp_recovery_max_step_rad_);
+    const double limited_measured_yaw = wrap_to_pi(yaw_pred + limited_residual);
+    auto recovery_update = filter_->update_yaw(
+      limited_measured_yaw,
+      lidar_icp_yaw_var_rad2_ * lidar_icp_recovery_yaw_var_scale_,
+      lidar_icp_recovery_yaw_gate_rad_);
+    if (recovery_update.accepted) {
+      lidar_icp_recovery_active_ = true;
+      recovery_update.reason = "recovery_yaw_update";
+    } else {
+      lidar_icp_recovery_active_ = false;
+      recovery_update.reason = "recovery_" + recovery_update.reason;
+    }
+    update_lidar_icp_recovery_diagnostics();
+    return recovery_update;
   }
 
   void imu_callback(const sensor_msgs::msg::Imu::ConstSharedPtr msg)
@@ -343,6 +557,196 @@ private:
       fixed_gyro_z_bias_radps_, stddev, startup_gyro_z_samples_.size(), elapsed_sec);
   }
 
+  void lidar_scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr msg)
+  {
+    diag_.lidar_icp_enabled = enable_lidar_icp_yaw_;
+    diag_.lidar_icp_initialized = lidar_icp_initialized_;
+    diag_.lidar_icp_update_applied = false;
+    diag_.lidar_icp_source_points = 0;
+    diag_.lidar_icp_dt_ms = 0.0;
+    diag_.lidar_icp_yaw_delta_rad = 0.0;
+    diag_.lidar_icp_yaw_rate_radps = 0.0;
+    diag_.lidar_icp_yaw_innovation_rad = 0.0;
+    diag_.lidar_icp_yaw_gate_rad = lidar_icp_yaw_gate_rad_;
+    diag_.lidar_icp_yaw_variance_rad2 = lidar_icp_yaw_var_rad2_;
+    update_lidar_icp_recovery_diagnostics();
+
+    if (!enable_lidar_icp_yaw_ || !lidar_icp_) {
+      reset_lidar_icp_recovery();
+      set_lidar_icp_skip_reason("disabled");
+      return;
+    }
+    if (!filter_->initialized()) {
+      lidar_icp_initialized_ = false;
+      have_lidar_icp_yaw_ref_ = false;
+      last_lidar_icp_update_stamp_ns_.reset();
+      last_lidar_icp_yaw_rate_radps_.reset();
+      diag_.lidar_icp_initialized = false;
+      reset_lidar_icp_recovery();
+      set_lidar_icp_skip_reason("eskf_not_initialized");
+      return;
+    }
+
+    const int64_t ns = stamp_ns(msg->header.stamp);
+    if (last_lidar_scan_stamp_ns_ && ns <= *last_lidar_scan_stamp_ns_) {
+      reset_lidar_icp_recovery();
+      set_lidar_icp_skip_reason("out_of_order");
+      return;
+    }
+    last_lidar_scan_stamp_ns_ = ns;
+
+    const auto base_from_scan = base_from_lidar(msg->header.frame_id);
+    if (!base_from_scan) {
+      return;
+    }
+
+    std::vector<Eigen::Vector3d> points;
+    points.reserve(msg->ranges.size());
+    double angle = msg->angle_min;
+    for (const float range_f : msg->ranges) {
+      const double range = static_cast<double>(range_f);
+      if (std::isfinite(range) && range >= msg->range_min && range <= msg->range_max &&
+        range >= lidar_icp_min_range_m_ && range <= lidar_icp_max_range_m_)
+      {
+        Eigen::Vector3d point_lidar(
+          range * std::cos(angle),
+          range * std::sin(angle),
+          0.0);
+        Eigen::Vector3d point_base = (*base_from_scan) * point_lidar;
+        point_base.z() = 0.0;
+        if (!point_in_lidar_icp_exclusion_box(point_base)) {
+          points.push_back(point_base);
+        }
+      }
+      angle += msg->angle_increment;
+    }
+    if (points.empty()) {
+      reset_lidar_icp_recovery();
+      set_lidar_icp_skip_reason("empty_points");
+      return;
+    }
+
+    if (!lidar_icp_initialized_) {
+      lidar_icp_->Reset();
+      const Eigen::Isometry3d pose = filter_->pose_matrix();
+      lidar_icp_->pose() = Sophus::SE3d(Eigen::Quaterniond(pose.linear()), pose.translation());
+      lidar_icp_initialized_ = true;
+      have_lidar_icp_yaw_ref_ = false;
+      last_lidar_icp_update_stamp_ns_.reset();
+      last_lidar_icp_yaw_rate_radps_.reset();
+      reset_lidar_icp_recovery();
+    }
+    diag_.lidar_icp_initialized = lidar_icp_initialized_;
+
+    const std::vector<double> point_timestamps;
+    const auto & [registered_frame, source] = lidar_icp_->RegisterFrame(points, point_timestamps);
+    (void)registered_frame;
+    diag_.lidar_icp_source_points = static_cast<int>(source.size());
+    if (static_cast<int>(source.size()) < lidar_icp_min_source_points_) {
+      have_lidar_icp_yaw_ref_ = false;
+      last_lidar_icp_yaw_rate_radps_.reset();
+      reset_lidar_icp_recovery();
+      set_lidar_icp_skip_reason("min_source_points");
+      return;
+    }
+
+    const auto replay_target = filter_->stamp_ns();
+    if (!replay_target) {
+      reset_lidar_icp_recovery();
+      set_lidar_icp_skip_reason("missing_filter_stamp");
+      return;
+    }
+
+    if (!last_lidar_icp_update_stamp_ns_) {
+      last_lidar_icp_update_stamp_ns_ = ns;
+      last_lidar_icp_yaw_ref_rad_ =
+        yaw_from_quaternion(Eigen::Quaterniond(filter_->pose_matrix().linear()));
+      have_lidar_icp_yaw_ref_ = true;
+      reset_lidar_icp_recovery();
+      set_lidar_icp_skip_reason("bootstrap_dt");
+      return;
+    }
+
+    const double dt = static_cast<double>(ns - *last_lidar_icp_update_stamp_ns_) * 1.0e-9;
+    last_lidar_icp_update_stamp_ns_ = ns;
+    diag_.lidar_icp_dt_ms = dt * 1.0e3;
+    if (!std::isfinite(dt) || !(dt > 0.0)) {
+      reset_lidar_icp_recovery();
+      set_lidar_icp_skip_reason("invalid_dt");
+      return;
+    }
+
+    const Sophus::SE3d delta = lidar_icp_->delta();
+    const double yaw_delta = wrap_to_pi(yaw_from_rotation(delta.so3().matrix()));
+    const double yaw_rate = yaw_delta / dt;
+    diag_.lidar_icp_yaw_delta_rad = yaw_delta;
+    diag_.lidar_icp_yaw_rate_radps = yaw_rate;
+    if (lidar_icp_max_abs_yaw_rate_radps_ > 0.0 &&
+      std::isfinite(yaw_rate) && std::abs(yaw_rate) > lidar_icp_max_abs_yaw_rate_radps_)
+    {
+      have_lidar_icp_yaw_ref_ = false;
+      last_lidar_icp_yaw_rate_radps_.reset();
+      reset_lidar_icp_recovery();
+      set_lidar_icp_skip_reason("yaw_rate_gate");
+      return;
+    }
+    if (!have_lidar_icp_yaw_ref_) {
+      last_lidar_icp_yaw_ref_rad_ =
+        yaw_from_quaternion(Eigen::Quaterniond(filter_->pose_matrix().linear()));
+      have_lidar_icp_yaw_ref_ = true;
+      reset_lidar_icp_recovery();
+      set_lidar_icp_skip_reason("init_yaw_ref");
+      return;
+    }
+
+    const double measured_yaw = wrap_to_pi(last_lidar_icp_yaw_ref_rad_ + yaw_delta);
+    const bool stable_recovery_sample =
+      !last_lidar_icp_yaw_rate_radps_ ||
+      lidar_icp_recovery_max_yaw_rate_delta_radps_ <= 0.0 ||
+      std::abs(yaw_rate - *last_lidar_icp_yaw_rate_radps_) <=
+      lidar_icp_recovery_max_yaw_rate_delta_radps_;
+    last_lidar_icp_yaw_rate_radps_ = yaw_rate;
+    YawUpdateResult update;
+    if (ns < *replay_target) {
+      const auto current = filter_->snapshot();
+      if (!restore_snapshot_before(ns)) {
+        reset_lidar_icp_recovery();
+        set_lidar_icp_skip_reason("outside_history");
+        return;
+      }
+      predict_filter_to_stamp(ns);
+      update = update_lidar_icp_yaw_with_recovery(measured_yaw, stable_recovery_sample);
+      if (!update.accepted) {
+        filter_->restore(current);
+      } else {
+        record_snapshot();
+        predict_filter_to_stamp(*replay_target);
+        record_snapshot();
+      }
+    } else {
+      predict_filter_to_stamp(ns);
+      update = update_lidar_icp_yaw_with_recovery(measured_yaw, stable_recovery_sample);
+      if (update.accepted) {
+        record_snapshot();
+      }
+    }
+
+    diag_.lidar_icp_update_applied = update.accepted;
+    diag_.lidar_icp_update_reason = update.reason;
+    diag_.lidar_icp_yaw_innovation_rad = update.yaw_innovation_rad;
+    diag_.lidar_icp_yaw_gate_rad = update.yaw_gate_rad;
+    diag_.lidar_icp_yaw_variance_rad2 = update.yaw_variance_rad2;
+    if (update.accepted) {
+      last_lidar_icp_yaw_ref_rad_ = measured_yaw;
+    } else {
+      if (update.reason != "yaw_gate") {
+        have_lidar_icp_yaw_ref_ = false;
+      }
+      diag_.last_skip_reason = "lidar_icp_" + update.reason;
+    }
+    prune_history(std::max(ns, filter_->stamp_ns().value_or(ns)));
+  }
+
   void board_pose_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr msg)
   {
     const auto cam_from_base = camera_from_base();
@@ -376,6 +780,11 @@ private:
       const auto replay_target = filter_->stamp_ns();
       filter_->initialize_position_only(
         ns, leader_from_base.translation(), pos_cov);
+      lidar_icp_initialized_ = false;
+      have_lidar_icp_yaw_ref_ = false;
+      last_lidar_icp_update_stamp_ns_.reset();
+      last_lidar_icp_yaw_rate_radps_.reset();
+      reset_lidar_icp_recovery();
       record_snapshot();
       if (replay_target && *replay_target > ns) {
         predict_filter_to_stamp(*replay_target);
@@ -606,6 +1015,11 @@ private:
     diag_.gyro_bias_valid = gyro_bias_valid_;
     diag_.stationary_detected = stationary_detected_;
     diag_.calibration_status = calibration_status_;
+    diag_.lidar_icp_enabled = enable_lidar_icp_yaw_;
+    diag_.lidar_icp_initialized = lidar_icp_initialized_;
+    diag_.lidar_icp_yaw_gate_rad = lidar_icp_yaw_gate_rad_;
+    diag_.lidar_icp_yaw_variance_rad2 = lidar_icp_yaw_var_rad2_;
+    update_lidar_icp_recovery_diagnostics();
     diagnostics_pub_->publish(diagnostics_builder_.build(now(), diag_));
   }
 
@@ -635,9 +1049,35 @@ private:
   std::string calibration_status_{"collecting"};
   std::deque<double> startup_gyro_z_samples_;
   std::optional<int64_t> startup_calibration_start_ns_;
+  bool enable_lidar_icp_yaw_{true};
+  double lidar_icp_min_range_m_{0.15};
+  double lidar_icp_max_range_m_{8.0};
+  int lidar_icp_min_source_points_{80};
+  double lidar_icp_yaw_var_rad2_{0.05};
+  double lidar_icp_yaw_gate_rad_{12.0 * M_PI / 180.0};
+  double lidar_icp_max_abs_yaw_rate_radps_{1.5};
+  bool lidar_icp_exclude_leader_box_{true};
+  double lidar_icp_exclude_x_min_m_{0.10};
+  double lidar_icp_exclude_x_max_m_{4.00};
+  double lidar_icp_exclude_abs_y_max_m_{1.00};
+  bool enable_lidar_icp_yaw_recovery_{true};
+  int lidar_icp_recovery_min_yaw_gate_rejects_{5};
+  int lidar_icp_recovery_min_stable_samples_{5};
+  double lidar_icp_recovery_yaw_gate_rad_{45.0 * M_PI / 180.0};
+  double lidar_icp_recovery_max_step_rad_{3.0 * M_PI / 180.0};
+  double lidar_icp_recovery_yaw_var_scale_{8.0};
+  double lidar_icp_recovery_max_yaw_rate_delta_radps_{0.35};
+  int lidar_icp_yaw_gate_rejects_{0};
+  int lidar_icp_recovery_stable_samples_{0};
+  bool lidar_icp_recovery_active_{false};
+  bool lidar_icp_initialized_{false};
+  bool have_lidar_icp_yaw_ref_{false};
+  double last_lidar_icp_yaw_ref_rad_{0.0};
+  std::unique_ptr<kiss_icp::pipeline::KissICP> lidar_icp_;
 
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr board_pose_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr lidar_scan_sub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr board_odom_pub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr board_pose_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr leader_rear_odom_pub_;
@@ -656,7 +1096,12 @@ private:
   std::deque<GyroRelativeEskfSnapshot> state_history_;
   std::optional<ImuSample> last_imu_sample_;
   std::optional<int64_t> last_vision_stamp_ns_;
+  std::optional<int64_t> last_lidar_scan_stamp_ns_;
+  std::optional<int64_t> last_lidar_icp_update_stamp_ns_;
+  std::optional<double> last_lidar_icp_yaw_rate_radps_;
   std::optional<Eigen::Isometry3d> cached_camera_from_base_;
+  std::optional<Eigen::Isometry3d> cached_base_from_lidar_;
+  std::string cached_lidar_frame_;
   std::string cached_imu_frame_;
   std::optional<Eigen::Matrix3d> cached_rotation_base_from_imu_;
 };

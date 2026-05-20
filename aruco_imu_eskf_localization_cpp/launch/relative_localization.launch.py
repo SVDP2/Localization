@@ -73,6 +73,7 @@ def generate_launch_description():
         'enable_camera_lidar_static_tf')
     image_topic = LaunchConfiguration('image_topic')
     imu_topic = LaunchConfiguration('imu_topic')
+    lidar_scan_topic = LaunchConfiguration('lidar_scan_topic')
     publish_aruco_tf = LaunchConfiguration('publish_aruco_tf')
     enable_pose_viz = LaunchConfiguration('enable_pose_viz')
     video_device = LaunchConfiguration('video_device')
@@ -104,6 +105,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument('image_topic', default_value='image_raw'),
         DeclareLaunchArgument('imu_topic', default_value='imu'),
+        DeclareLaunchArgument('lidar_scan_topic', default_value='/follower/scan'),
         DeclareLaunchArgument('publish_aruco_tf', default_value='false'),
         DeclareLaunchArgument('enable_pose_viz', default_value='true'),
         DeclareLaunchArgument('video_device', default_value='/dev/video0'),
@@ -224,6 +226,7 @@ def generate_launch_description():
                     'leader_rear_odom_topic': 'localization/leader_rear/odom',
                     'leader_rear_pose_topic': 'localization/leader_rear/pose',
                     'diagnostics_topic': 'diagnostics',
+                    'lidar_scan_topic': lidar_scan_topic,
                     'board_frame': _prefixed_frame(leader_frame_prefix, 'board'),
                     'leader_rear_frame': _prefixed_frame(leader_frame_prefix, 'leader_rear'),
                     'base_frame': _prefixed_frame(frame_prefix, 'base_link'),
