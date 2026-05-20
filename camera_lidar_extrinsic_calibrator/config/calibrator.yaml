@@ -1,0 +1,15 @@
+camera_lidar_extrinsic_calibrator_node:
+  ros__parameters:
+    image_topic: /follower/image_raw
+    scan_topic: /follower/scan
+    camera_frame: follower/usb_cam
+    lidar_frame: follower/lidar
+    max_pair_dt_sec: 0.08
+    allow_stale_pair: true
+    image_buffer_size: 60
+    scan_buffer_size: 60
+    max_lidar_range_m: 5.0
+    lidar_view_range_m: 5.0
+    lidar_display_rotation_deg: 230.0
+    min_correspondences: 6
+    output_root: /home/xytron/follower_ws/calibration/camera_lidar

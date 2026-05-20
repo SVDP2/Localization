@@ -1,12 +1,16 @@
 import os
 
 from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import PackageNotFoundError
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import LogInfo
+from launch.actions import OpaqueFunction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 import yaml
 
 
@@ -20,13 +24,53 @@ def _node_params(params_file, node_name):
     return dict(data.get(node_name, {}).get('ros__parameters', {}))
 
 
+def _xycar_imu_actions(context):
+    try:
+        package_share = get_package_share_directory('xycar_imu')
+    except PackageNotFoundError:
+        return [
+            LogInfo(
+                msg=(
+                    'xycar_imu package not found; not starting IMU driver. '
+                    'Source the xycar IMU underlay or launch the existing IMU '
+                    'driver separately so /follower/imu is available.'
+                )
+            )
+        ]
+
+    config_path = os.path.join(package_share, 'config', 'xycar_imu.yaml')
+    if not os.path.exists(config_path):
+        config_path = os.path.join(package_share, 'config', 'imu.yaml')
+
+    robot_namespace = LaunchConfiguration('robot_namespace').perform(context)
+    frame_prefix = LaunchConfiguration('frame_prefix').perform(context)
+    return [
+        Node(
+            package='xycar_imu',
+            executable='imu_node',
+            name='imu_node',
+            namespace=robot_namespace,
+            output='screen',
+            parameters=[
+                config_path,
+                {
+                    'frame_header': f'{frame_prefix}base_imu_link',
+                },
+            ],
+        )
+    ]
+
+
 def generate_launch_description():
     robot_namespace = LaunchConfiguration('robot_namespace')
     frame_prefix = LaunchConfiguration('frame_prefix')
     leader_frame_prefix = LaunchConfiguration('leader_frame_prefix')
     enable_camera = LaunchConfiguration('enable_camera')
     enable_imu = LaunchConfiguration('enable_imu')
+    enable_lidar = LaunchConfiguration('enable_lidar')
     enable_vehicle_static_tf = LaunchConfiguration('enable_vehicle_static_tf')
+    enable_camera_lidar_static_tf = LaunchConfiguration(
+        'enable_camera_lidar_static_tf')
     image_topic = LaunchConfiguration('image_topic')
     imu_topic = LaunchConfiguration('imu_topic')
     publish_aruco_tf = LaunchConfiguration('publish_aruco_tf')
@@ -52,7 +96,12 @@ def generate_launch_description():
         DeclareLaunchArgument('leader_frame_prefix', default_value='leader/'),
         DeclareLaunchArgument('enable_camera', default_value='true'),
         DeclareLaunchArgument('enable_imu', default_value='true'),
+        DeclareLaunchArgument('enable_lidar', default_value='true'),
         DeclareLaunchArgument('enable_vehicle_static_tf', default_value='true'),
+        DeclareLaunchArgument(
+            'enable_camera_lidar_static_tf',
+            default_value='true',
+        ),
         DeclareLaunchArgument('image_topic', default_value='image_raw'),
         DeclareLaunchArgument('imu_topic', default_value='imu'),
         DeclareLaunchArgument('publish_aruco_tf', default_value='false'),
@@ -73,37 +122,67 @@ def generate_launch_description():
             launch_arguments={'frame_prefix': frame_prefix}.items(),
             condition=IfCondition(enable_vehicle_static_tf),
         ),
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(
-                    get_package_share_directory('xycar_cam'),
-                    'launch',
-                    'xycar_cam.launch.py',
-                )
-            ),
-            launch_arguments={
-                'namespace': robot_namespace,
+        Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='follower_usb_cam_to_lidar_static_tf',
+            output='screen',
+            arguments=[
+                '--x', '0.0025602837540221954',
+                '--y', '0.12819786529006177',
+                '--z', '0.133867715594006',
+                '--qx', '-0.17415269402591296',
+                '--qy', '-0.6768985720658026',
+                '--qz', '0.6965430734104255',
+                '--qw', '-0.16219404792640454',
+                '--frame-id', _prefixed_frame(frame_prefix, 'usb_cam'),
+                '--child-frame-id', _prefixed_frame(frame_prefix, 'lidar'),
+            ],
+            condition=IfCondition(enable_camera_lidar_static_tf),
+        ),
+        Node(
+            package='usb_cam',
+            executable='usb_cam_node_exe',
+            name='usb_cam',
+            namespace=robot_namespace,
+            output='screen',
+            parameters=[{
                 'video_device': video_device,
+                'framerate': ParameterValue(framerate, value_type=float),
+                'io_method': 'mmap',
+                'frame_id': _prefixed_frame(frame_prefix, 'usb_cam'),
                 'pixel_format': pixel_format,
-                'image_width': image_width,
-                'image_height': image_height,
-                'framerate': framerate,
-                'camera_frame_id': _prefixed_frame(frame_prefix, 'usb_cam'),
-            }.items(),
+                'av_device_format': 'YUV422P',
+                'image_width': ParameterValue(image_width, value_type=int),
+                'image_height': ParameterValue(image_height, value_type=int),
+                'camera_name': 'follower_usb_cam',
+                'camera_info_url': 'package://usb_cam/config/camera_info.yaml',
+                'brightness': -1,
+                'contrast': -1,
+                'saturation': -1,
+                'sharpness': -1,
+                'gain': -1,
+                'auto_white_balance': True,
+                'white_balance': 4000,
+                'autoexposure': True,
+                'exposure': 100,
+                'autofocus': False,
+                'focus': -1,
+            }],
             condition=IfCondition(enable_camera),
         ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(
-                    get_package_share_directory('xycar_imu'),
+                    get_package_share_directory('follower_lidar_driver'),
                     'launch',
-                    'xycar_imu.launch.py',
+                    'follower_lidar.launch.py',
                 )
             ),
-            launch_arguments={
-                'namespace': robot_namespace,
-                'frame_header': _prefixed_frame(frame_prefix, 'base_imu_link'),
-            }.items(),
+            condition=IfCondition(enable_lidar),
+        ),
+        OpaqueFunction(
+            function=_xycar_imu_actions,
             condition=IfCondition(enable_imu),
         ),
         Node(

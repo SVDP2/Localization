@@ -1,21 +1,21 @@
-# Provisional value copied from the older follower camera-LiDAR calibration
-# workspace. Treat this as an initial projection guess until it is revalidated
-# with the current 2026-04-07 follower camera intrinsic calibration.
+# Manual follower camera-LiDAR calibration saved on 2026-05-20.
+# Source:
+# /home/xytron/follower_ws/calibration/camera_lidar/20260520_192434_manual/lidar_to_camera_extrinsic.yaml
 parent_frame: follower/usb_cam
 child_frame: follower/lidar
 translation:
-  x: 0.03170727
-  y: 0.08037714
-  z: 0.15902277
+  x: 0.0025602837540221954
+  y: 0.12819786529006177
+  z: 0.133867715594006
 rotation_matrix:
   rows: 3
   columns: 3
   data:
-    - [0.87405342, 0.48520243, 0.02468240]
-    - [0.01537777, 0.02314885, -0.99961375]
-    - [-0.48558639, 0.87409538, 0.01277200]
+    - [-0.8867278599615278, 0.46171770107817744, -0.023031866601118577]
+    - [0.009817138552034876, -0.03100282790504939, -0.9994710843503877]
+    - [-0.46218754435694076, -0.886484962744982, 0.022958324597588255]
 quaternion_xyzw:
-  x: 0.67788874
-  y: 0.18461001
-  z: -0.16997774
-  w: 0.69100909
+  x: -0.17415269402591296
+  y: -0.6768985720658026
+  z: 0.6965430734104255
+  w: -0.16219404792640454

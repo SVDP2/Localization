@@ -122,8 +122,8 @@ class CameraLidarProjectionNode(Node):
             f'image={self.image_topic} scan={self.scan_topic} '
             f'output={projected_image_topic} model={self.camera_model}')
         self.get_logger().warn(
-            'using provisional camera-LiDAR extrinsic; validate projection before '
-            'using it for localization correction')
+            'using configured camera-LiDAR extrinsic; validate projection after '
+            'changing calibration files')
 
     def scan_callback(self, msg):
         self.latest_scan = msg

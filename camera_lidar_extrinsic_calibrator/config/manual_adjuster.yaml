@@ -1,0 +1,12 @@
+camera_lidar_manual_adjust_node:
+  ros__parameters:
+    image_topic: /follower/image_raw
+    scan_topic: /follower/scan
+    camera_frame: follower/usb_cam
+    lidar_frame: follower/lidar
+    max_lidar_range_m: 5.0
+    min_camera_depth_m: 0.03
+    point_stride: 1
+    translation_range_m: 0.5
+    rotation_range_deg: 45.0
+    output_root: /home/xytron/follower_ws/calibration/camera_lidar
