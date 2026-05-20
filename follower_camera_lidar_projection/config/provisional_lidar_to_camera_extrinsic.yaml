@@ -1,0 +1,21 @@
+# Provisional value copied from the older follower camera-LiDAR calibration
+# workspace. Treat this as an initial projection guess until it is revalidated
+# with the current 2026-04-07 follower camera intrinsic calibration.
+parent_frame: follower/usb_cam
+child_frame: follower/lidar
+translation:
+  x: 0.03170727
+  y: 0.08037714
+  z: 0.15902277
+rotation_matrix:
+  rows: 3
+  columns: 3
+  data:
+    - [0.87405342, 0.48520243, 0.02468240]
+    - [0.01537777, 0.02314885, -0.99961375]
+    - [-0.48558639, 0.87409538, 0.01277200]
+quaternion_xyzw:
+  x: 0.67788874
+  y: 0.18461001
+  z: -0.16997774
+  w: 0.69100909

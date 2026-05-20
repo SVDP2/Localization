@@ -1,0 +1,16 @@
+camera_lidar_projection_node:
+  ros__parameters:
+    image_topic: /follower/image_raw
+    scan_topic: /follower/scan
+    projected_image_topic: /follower/camera_lidar/projected_image
+    camera_info_topic: /follower/camera_info
+    camera_frame: follower/usb_cam
+    lidar_frame: follower/lidar
+    camera_calibration_file: ""
+    extrinsic_file: ""
+    max_projection_range_m: 4.0
+    min_camera_depth_m: 0.03
+    point_stride: 1
+    draw_radius_px: 2
+    colorize_by_range: true
+    publish_camera_info: false

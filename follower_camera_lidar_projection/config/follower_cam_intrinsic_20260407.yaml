@@ -1,0 +1,26 @@
+calibration_date: '2026-04-07'
+camera_model: fisheye
+image_size:
+  width: 640
+  height: 480
+camera_matrix:
+  rows: 3
+  columns: 3
+  data:
+    - [378.61149891713734, 0.0, 318.77501694893465]
+    - [0.0, 378.8293526864536, 268.71170324069317]
+    - [0.0, 0.0, 1.0]
+distortion_coefficients:
+  rows: 1
+  columns: 4
+  data:
+    - -0.014937293638892261
+    - -0.01979708089936373
+    - 0.018903603871107223
+    - -0.0070340442305269505
+chessboard:
+  pattern_size:
+    columns: 9
+    rows: 9
+  square_size_meters: 0.07
+rms_reprojection_error: 0.43455013025912986

@@ -199,6 +199,11 @@ python3 -m pytest test/ -v
 |------|-----------|-----------|
 | **leader motion compensation** | V2V leader speed/yaw-rate가 controller reference에는 연결됨, ESKF dynamics에는 아직 제한적 | V2V 통신으로 leader yaw rate/speed를 받아 상대 dynamics 보정 |
 | **LiDAR range fusion** | 미구현 | ArUco pose를 leader identity/ROI seed로 쓰고 3D LiDAR cluster/range로 거리 안정화 |
+
+2026-05-20 기준 팔로워 2D LiDAR bringup과 camera projection 검증 경로는
+`docs/follower_2d_lidar_camera_projection.md`에 기록한다. 현재 projection
+extrinsic은 과거 calibration workspace에서 가져온 provisional 값이며, 실제
+localization correction에 쓰기 전 반드시 이미지 overlay로 재검증한다.
 | **wheel odom / vehicle speed** | 미사용 | follower wheel odom 통합으로 pure rotation vs translation 구분, ZUPT/NHC 적용 |
 | **ESKF C++ 이전** | Python 구현 | moving leader 단계부터 deterministic latency가 중요해지므로 C++ backend 권장 |
 | **timestamp alignment 강화** | 2초 replay buffer | moving leader에서는 vision 지연이 상대 위치 오차로 직결, 더 정밀한 시간 보상 필요 |
