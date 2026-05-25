@@ -23,7 +23,9 @@ struct ArucoImuEskfDiagnostics
   bool imu_orientation_valid{false};
   double raw_gyro_z_radps{0.0};
   double corrected_gyro_z_radps{0.0};
+  double final_gyro_z_radps{0.0};
   double gyro_z_bias_radps{0.0};
+  double residual_gyro_z_bias_radps{0.0};
   bool gyro_bias_valid{false};
   bool stationary_detected{false};
   std::string calibration_status{"disabled"};
@@ -31,6 +33,9 @@ struct ArucoImuEskfDiagnostics
   bool lidar_icp_initialized{false};
   bool lidar_icp_update_applied{false};
   std::string lidar_icp_update_reason{"disabled"};
+  int lidar_icp_raw_points{0};
+  int lidar_icp_excluded_points{0};
+  int lidar_icp_usable_points{0};
   int lidar_icp_source_points{0};
   double lidar_icp_dt_ms{0.0};
   double lidar_icp_yaw_delta_rad{0.0};

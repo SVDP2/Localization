@@ -91,6 +91,28 @@ TEST(GyroRelativeEskf, YawUpdateCorrectsGyroDrift)
   EXPECT_LT(std::abs(yaw_after - 0.1), std::abs(yaw_before - 0.1));
 }
 
+TEST(GyroRelativeEskf, RepeatedYawUpdatesEstimateResidualGyroBias)
+{
+  GyroRelativeEskfOptions options;
+  options.gyro_noise_std_radps = 0.005;
+  options.initial_gyro_bias_std_radps = 0.05;
+  GyroRelativeEskf filter(options);
+  filter.initialize_position_only(
+    0, Eigen::Vector3d::Zero(), 0.1 * Eigen::Matrix3d::Identity());
+
+  int64_t stamp_ns = 0;
+  for (int i = 0; i < 8; ++i) {
+    stamp_ns += 500000000LL;
+    filter.predict(stamp_ns, Eigen::Vector3d(0.0, 0.0, 0.04));
+    const auto result = filter.update_yaw(0.0, 0.0004, 0.5);
+    EXPECT_TRUE(result.accepted);
+  }
+
+  EXPECT_GT(filter.residual_gyro_z_bias_radps(), 0.02);
+  EXPECT_LT(filter.residual_gyro_z_bias_radps(), 0.06);
+  EXPECT_LT(std::abs(filter.angular_velocity_base_radps().z()), 0.03);
+}
+
 TEST(GyroRelativeEskf, YawGateRejectsLargeInnovation)
 {
   GyroRelativeEskf filter;

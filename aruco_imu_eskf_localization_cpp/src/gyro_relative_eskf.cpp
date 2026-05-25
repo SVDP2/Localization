@@ -30,17 +30,29 @@ void GyroRelativeEskf::reset()
   rotation_ = Eigen::Quaterniond::Identity();
   covariance_ = initial_covariance();
   last_angular_velocity_base_.setZero();
+  residual_gyro_z_bias_radps_ = 0.0;
   initialized_ = false;
 }
 
-Eigen::Matrix3d GyroRelativeEskf::initial_covariance() const
+Eigen::Matrix4d GyroRelativeEskf::initial_covariance() const
 {
-  Eigen::Matrix3d p = Eigen::Matrix3d::Zero();
+  Eigen::Matrix4d p = Eigen::Matrix4d::Zero();
   const double ori_std_rad = std::max(options_.initial_orientation_std_deg, 1.0e-3) * M_PI / 180.0;
+  const double bias_std = std::max(options_.initial_gyro_bias_std_radps, 1.0e-6);
   p(0, 0) = std::pow(std::max(options_.initial_position_std_m, 1.0e-3), 2);
   p(1, 1) = std::pow(std::max(options_.initial_position_std_m, 1.0e-3), 2);
   p(2, 2) = std::pow(ori_std_rad, 2);
+  p(3, 3) = bias_std * bias_std;
   return p;
+}
+
+double GyroRelativeEskf::clamped_residual_bias(double bias_radps) const
+{
+  const double limit = std::max(options_.max_abs_gyro_bias_radps, 0.0);
+  if (limit <= 0.0) {
+    return bias_radps;
+  }
+  return std::clamp(bias_radps, -limit, limit);
 }
 
 GyroRelativeEskfSnapshot GyroRelativeEskf::snapshot() const
@@ -51,6 +63,7 @@ GyroRelativeEskfSnapshot GyroRelativeEskf::snapshot() const
   s.rotation = rotation_;
   s.covariance = covariance_;
   s.last_angular_velocity_base = last_angular_velocity_base_;
+  s.residual_gyro_z_bias_radps = residual_gyro_z_bias_radps_;
   s.initialized = initialized_;
   return s;
 }
@@ -64,6 +77,7 @@ void GyroRelativeEskf::restore(const GyroRelativeEskfSnapshot & snapshot)
     Eigen::AngleAxisd(yaw_from_quaternion(snapshot.rotation), Eigen::Vector3d::UnitZ()));
   covariance_ = snapshot.covariance;
   last_angular_velocity_base_ = snapshot.last_angular_velocity_base;
+  residual_gyro_z_bias_radps_ = clamped_residual_bias(snapshot.residual_gyro_z_bias_radps);
   initialized_ = snapshot.initialized;
 }
 
@@ -77,6 +91,7 @@ void GyroRelativeEskf::initialize_position_only(
   position_m_.z() = 0.0;
   rotation_ = Eigen::Quaterniond::Identity();
   covariance_ = initial_covariance();
+  residual_gyro_z_bias_radps_ = 0.0;
   covariance_(0, 0) = std::max(position_covariance(0, 0), options_.min_position_variance);
   covariance_(1, 1) = std::max(position_covariance(1, 1), options_.min_position_variance);
   initialized_ = true;
@@ -99,11 +114,17 @@ void GyroRelativeEskf::predict(int64_t target_stamp_ns, const Eigen::Vector3d & 
     return;
   }
 
-  const double yaw_rate = angular_velocity_base.z();
-  const double yaw = yaw_from_quaternion(rotation_) + yaw_rate * dt;
+  const double yaw_rate = angular_velocity_base.z() - residual_gyro_z_bias_radps_;
+  const double yaw = wrap_to_pi(yaw_from_quaternion(rotation_) + yaw_rate * dt);
   rotation_ = Eigen::Quaterniond(Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()));
 
+  Eigen::Matrix4d f = Eigen::Matrix4d::Identity();
+  f(2, 3) = -dt;
+  covariance_ = f * covariance_ * f.transpose();
   covariance_(2, 2) += std::pow(std::max(options_.gyro_noise_std_radps, 1.0e-5), 2) * dt;
+  covariance_(3, 3) +=
+    std::pow(std::max(options_.gyro_bias_noise_std_radps, 1.0e-8), 2) * dt;
+  covariance_ = 0.5 * (covariance_ + covariance_.transpose());
   stamp_ns_ = target_stamp_ns;
   last_angular_velocity_base_ = angular_velocity_base;
 }
@@ -173,20 +194,24 @@ YawUpdateResult GyroRelativeEskf::update_yaw(
     return result;
   }
 
-  const Eigen::Vector3d k = covariance_.col(2) / s;
+  const Eigen::Matrix<double, 4, 1> k = covariance_.col(2) / s;
   position_m_.head<2>() += k.head<2>() * residual;
   position_m_.z() = 0.0;
 
-  const double yaw = wrap_to_pi(yaw_pred + k.z() * residual);
+  const double yaw = wrap_to_pi(yaw_pred + k(2) * residual);
   rotation_ = Eigen::Quaterniond(Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()));
+  residual_gyro_z_bias_radps_ =
+    clamped_residual_bias(residual_gyro_z_bias_radps_ + k(3) * residual);
 
-  const Eigen::Matrix3d i_kh =
-    Eigen::Matrix3d::Identity() - k * Eigen::RowVector3d(0.0, 0.0, 1.0);
+  Eigen::Matrix<double, 1, 4> h;
+  h << 0.0, 0.0, 1.0, 0.0;
+  const Eigen::Matrix4d i_kh = Eigen::Matrix4d::Identity() - k * h;
   covariance_ = i_kh * covariance_ * i_kh.transpose() + yaw_variance_rad2 * (k * k.transpose());
   covariance_ = 0.5 * (covariance_ + covariance_.transpose());
   covariance_(0, 0) = std::max(covariance_(0, 0), options_.min_position_variance);
   covariance_(1, 1) = std::max(covariance_(1, 1), options_.min_position_variance);
   covariance_(2, 2) = std::max(covariance_(2, 2), 1.0e-9);
+  covariance_(3, 3) = std::max(covariance_(3, 3), 1.0e-12);
 
   result.accepted = true;
   result.initialized = true;
@@ -221,7 +246,7 @@ Eigen::Vector3d GyroRelativeEskf::linear_velocity_base_mps() const
 
 Eigen::Vector3d GyroRelativeEskf::angular_velocity_base_radps() const
 {
-  return Eigen::Vector3d(0.0, 0.0, last_angular_velocity_base_.z());
+  return Eigen::Vector3d(0.0, 0.0, last_angular_velocity_base_.z() - residual_gyro_z_bias_radps_);
 }
 
 Eigen::Matrix<double, 6, 6> transform_pose_covariance(

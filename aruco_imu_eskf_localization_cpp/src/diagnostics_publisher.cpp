@@ -53,7 +53,11 @@ diagnostic_msgs::msg::DiagnosticArray DiagnosticsPublisher::build(
   add_key_value(status, "imu_orientation_valid", input.imu_orientation_valid ? "true" : "false");
   add_key_value(status, "raw_gyro_z_radps", std::to_string(input.raw_gyro_z_radps));
   add_key_value(status, "corrected_gyro_z_radps", std::to_string(input.corrected_gyro_z_radps));
+  add_key_value(status, "final_gyro_z_radps", std::to_string(input.final_gyro_z_radps));
   add_key_value(status, "gyro_z_bias_radps", std::to_string(input.gyro_z_bias_radps));
+  add_key_value(
+    status, "residual_gyro_z_bias_radps",
+    std::to_string(input.residual_gyro_z_bias_radps));
   add_key_value(status, "gyro_bias_valid", input.gyro_bias_valid ? "true" : "false");
   add_key_value(status, "stationary_detected", input.stationary_detected ? "true" : "false");
   add_key_value(status, "calibration_status", input.calibration_status);
@@ -64,6 +68,12 @@ diagnostic_msgs::msg::DiagnosticArray DiagnosticsPublisher::build(
     status, "lidar_icp_update_applied",
     input.lidar_icp_update_applied ? "true" : "false");
   add_key_value(status, "lidar_icp_update_reason", input.lidar_icp_update_reason);
+  add_key_value(status, "lidar_icp_raw_points", std::to_string(input.lidar_icp_raw_points));
+  add_key_value(
+    status, "lidar_icp_excluded_points",
+    std::to_string(input.lidar_icp_excluded_points));
+  add_key_value(
+    status, "lidar_icp_usable_points", std::to_string(input.lidar_icp_usable_points));
   add_key_value(status, "lidar_icp_source_points", std::to_string(input.lidar_icp_source_points));
   add_key_value(status, "lidar_icp_dt_ms", std::to_string(input.lidar_icp_dt_ms));
   add_key_value(

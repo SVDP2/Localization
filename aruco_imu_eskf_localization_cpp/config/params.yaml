@@ -53,6 +53,9 @@ relative_localization_node:
     aruco_position_covariance_scale: 0.35
     position_smoothing_alpha: 0.55
     gyro_noise_std_radps: 0.05
+    gyro_bias_noise_std_radps: 0.002
+    initial_gyro_bias_std_radps: 0.02
+    max_abs_gyro_bias_radps: 0.08
     initial_position_std_m: 0.20
     initial_orientation_std_deg: 5.0
     gyro_z_bias_radps: 0.0
@@ -65,9 +68,9 @@ relative_localization_node:
     enable_lidar_icp_yaw: true
     lidar_icp_min_range_m: 0.15
     lidar_icp_max_range_m: 8.0
-    lidar_icp_min_source_points: 80
-    lidar_icp_yaw_var_rad2: 0.05
-    lidar_icp_yaw_gate_deg: 12.0
+    lidar_icp_min_source_points: 45
+    lidar_icp_yaw_var_rad2: 0.01
+    lidar_icp_yaw_gate_deg: 25.0
     lidar_icp_max_abs_yaw_rate_radps: 1.5
     lidar_icp_voxel_size_m: 0.10
     lidar_icp_max_points_per_voxel: 20
@@ -75,8 +78,8 @@ relative_localization_node:
     lidar_icp_convergence_criterion: 0.0001
     lidar_icp_exclude_leader_box: true
     lidar_icp_exclude_x_min_m: 0.10
-    lidar_icp_exclude_x_max_m: 4.00
-    lidar_icp_exclude_abs_y_max_m: 1.00
+    lidar_icp_exclude_x_max_m: 1.20
+    lidar_icp_exclude_abs_y_max_m: 0.45
     enable_lidar_icp_yaw_recovery: true
     lidar_icp_recovery_min_yaw_gate_rejects: 5
     lidar_icp_recovery_min_stable_samples: 5
@@ -84,6 +87,7 @@ relative_localization_node:
     lidar_icp_recovery_max_step_deg: 3.0
     lidar_icp_recovery_yaw_var_scale: 8.0
     lidar_icp_recovery_max_yaw_rate_delta_radps: 0.35
+    camera_tf_startup_grace_sec: 2.0
 
 pose_rviz_marker_node:
   ros__parameters:

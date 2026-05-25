@@ -53,16 +53,18 @@ image_raw ──> [aruco_detector_node] ──board_pose──> [relative_locali
 | `base_link` | follower 차량 바디 |
 | `usb_cam` | 카메라 광학 프레임 |
 
-board-leader_rear 변환은 순수 회전이며, static TF로 broadcast된다.
+leader_rear-board 변환은 순수 회전이며, static TF로 broadcast된다.
 
 ### 2.4 TF 체인
 
 ```
-board ──(static)──> leader_rear ──(dynamic, ESKF 출력)──> base_link
-                                                            |
-                                                      (static TF)
-                                                            |
-                                                    usb_cam, imu_link
+leader_rear ──(static)──> board
+     |
+     └──(dynamic, ESKF 출력)──> base_link
+                                  |
+                            (static TF)
+                                  |
+                          usb_cam, imu_link
 ```
 
 ---

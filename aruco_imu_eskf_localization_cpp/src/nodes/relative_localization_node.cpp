@@ -90,6 +90,7 @@ public:
     tf_buffer_(get_clock()),
     tf_listener_(tf_buffer_)
   {
+    node_start_ns_ = now().nanoseconds();
     declare_parameter("imu_topic", "imu");
     declare_parameter("board_pose_topic", "localization/aruco/board_pose");
     declare_parameter("odom_topic", "localization/relative/odom");
@@ -110,6 +111,9 @@ public:
     declare_parameter("aruco_position_covariance_scale", 0.35);
     declare_parameter("position_smoothing_alpha", 0.55);
     declare_parameter("gyro_noise_std_radps", 0.05);
+    declare_parameter("gyro_bias_noise_std_radps", 0.002);
+    declare_parameter("initial_gyro_bias_std_radps", 0.02);
+    declare_parameter("max_abs_gyro_bias_radps", 0.08);
     declare_parameter("initial_position_std_m", 0.20);
     declare_parameter("initial_orientation_std_deg", 5.0);
     declare_parameter("gyro_z_bias_radps", 0.0);
@@ -122,9 +126,9 @@ public:
     declare_parameter("enable_lidar_icp_yaw", true);
     declare_parameter("lidar_icp_min_range_m", 0.15);
     declare_parameter("lidar_icp_max_range_m", 8.0);
-    declare_parameter("lidar_icp_min_source_points", 80);
-    declare_parameter("lidar_icp_yaw_var_rad2", 0.05);
-    declare_parameter("lidar_icp_yaw_gate_deg", 12.0);
+    declare_parameter("lidar_icp_min_source_points", 45);
+    declare_parameter("lidar_icp_yaw_var_rad2", 0.01);
+    declare_parameter("lidar_icp_yaw_gate_deg", 25.0);
     declare_parameter("lidar_icp_max_abs_yaw_rate_radps", 1.5);
     declare_parameter("lidar_icp_voxel_size_m", 0.10);
     declare_parameter("lidar_icp_max_points_per_voxel", 20);
@@ -132,8 +136,8 @@ public:
     declare_parameter("lidar_icp_convergence_criterion", 0.0001);
     declare_parameter("lidar_icp_exclude_leader_box", true);
     declare_parameter("lidar_icp_exclude_x_min_m", 0.10);
-    declare_parameter("lidar_icp_exclude_x_max_m", 4.00);
-    declare_parameter("lidar_icp_exclude_abs_y_max_m", 1.00);
+    declare_parameter("lidar_icp_exclude_x_max_m", 1.20);
+    declare_parameter("lidar_icp_exclude_abs_y_max_m", 0.45);
     declare_parameter("enable_lidar_icp_yaw_recovery", true);
     declare_parameter("lidar_icp_recovery_min_yaw_gate_rejects", 5);
     declare_parameter("lidar_icp_recovery_min_stable_samples", 5);
@@ -141,6 +145,7 @@ public:
     declare_parameter("lidar_icp_recovery_max_step_deg", 3.0);
     declare_parameter("lidar_icp_recovery_yaw_var_scale", 8.0);
     declare_parameter("lidar_icp_recovery_max_yaw_rate_delta_radps", 0.35);
+    declare_parameter("camera_tf_startup_grace_sec", 2.0);
 
     board_frame_ = get_parameter("board_frame").as_string();
     leader_rear_frame_ = get_parameter("leader_rear_frame").as_string();
@@ -203,10 +208,18 @@ public:
       std::max(get_parameter("lidar_icp_recovery_yaw_var_scale").as_double(), 1.0);
     lidar_icp_recovery_max_yaw_rate_delta_radps_ =
       std::max(get_parameter("lidar_icp_recovery_max_yaw_rate_delta_radps").as_double(), 0.0);
+    camera_tf_startup_grace_sec_ =
+      std::max(get_parameter("camera_tf_startup_grace_sec").as_double(), 0.0);
 
     GyroRelativeEskfOptions filter_options;
     filter_options.position_smoothing_alpha = get_parameter("position_smoothing_alpha").as_double();
     filter_options.gyro_noise_std_radps = get_parameter("gyro_noise_std_radps").as_double();
+    filter_options.gyro_bias_noise_std_radps =
+      get_parameter("gyro_bias_noise_std_radps").as_double();
+    filter_options.initial_gyro_bias_std_radps =
+      get_parameter("initial_gyro_bias_std_radps").as_double();
+    filter_options.max_abs_gyro_bias_radps =
+      get_parameter("max_abs_gyro_bias_radps").as_double();
     filter_options.initial_position_std_m = get_parameter("initial_position_std_m").as_double();
     filter_options.initial_orientation_std_deg = get_parameter("initial_orientation_std_deg").as_double();
     filter_ = std::make_unique<GyroRelativeEskf>(filter_options);
@@ -241,7 +254,7 @@ public:
     if (publish_tf_) {
       tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
       static_tf_broadcaster_ = std::make_unique<tf2_ros::StaticTransformBroadcaster>(*this);
-      publish_static_board_to_leader_rear();
+      publish_static_leader_rear_to_board();
     }
 
     imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
@@ -316,7 +329,13 @@ private:
       cached_camera_from_base_ = transform_from_msg(tf).inverse();
       return cached_camera_from_base_;
     } catch (const std::exception & e) {
-      diag_.last_skip_reason = "camera_tf_unavailable";
+      const double age_sec =
+        static_cast<double>(now().nanoseconds() - node_start_ns_) * 1.0e-9;
+      diag_.last_skip_reason =
+        age_sec <= camera_tf_startup_grace_sec_ ? "camera_tf_waiting" : "camera_tf_unavailable";
+      if (age_sec <= camera_tf_startup_grace_sec_) {
+        return std::nullopt;
+      }
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 1000, "camera TF %s <- %s unavailable: %s",
         base_frame_.c_str(), camera_frame_.c_str(), e.what());
@@ -452,6 +471,9 @@ private:
     omega.z() = raw_gyro_z - fixed_gyro_z_bias_radps_;
     diag_.raw_gyro_z_radps = raw_gyro_z;
     diag_.corrected_gyro_z_radps = omega.z();
+    diag_.residual_gyro_z_bias_radps =
+      filter_ ? filter_->residual_gyro_z_bias_radps() : 0.0;
+    diag_.final_gyro_z_radps = omega.z() - diag_.residual_gyro_z_bias_radps;
     diag_.gyro_z_bias_radps = fixed_gyro_z_bias_radps_;
     diag_.gyro_bias_valid = gyro_bias_valid_;
     diag_.stationary_detected = stationary_detected_;
@@ -562,6 +584,9 @@ private:
     diag_.lidar_icp_enabled = enable_lidar_icp_yaw_;
     diag_.lidar_icp_initialized = lidar_icp_initialized_;
     diag_.lidar_icp_update_applied = false;
+    diag_.lidar_icp_raw_points = 0;
+    diag_.lidar_icp_excluded_points = 0;
+    diag_.lidar_icp_usable_points = 0;
     diag_.lidar_icp_source_points = 0;
     diag_.lidar_icp_dt_ms = 0.0;
     diag_.lidar_icp_yaw_delta_rad = 0.0;
@@ -602,12 +627,15 @@ private:
 
     std::vector<Eigen::Vector3d> points;
     points.reserve(msg->ranges.size());
+    int raw_points = 0;
+    int excluded_points = 0;
     double angle = msg->angle_min;
     for (const float range_f : msg->ranges) {
       const double range = static_cast<double>(range_f);
       if (std::isfinite(range) && range >= msg->range_min && range <= msg->range_max &&
         range >= lidar_icp_min_range_m_ && range <= lidar_icp_max_range_m_)
       {
+        ++raw_points;
         Eigen::Vector3d point_lidar(
           range * std::cos(angle),
           range * std::sin(angle),
@@ -616,10 +644,15 @@ private:
         point_base.z() = 0.0;
         if (!point_in_lidar_icp_exclusion_box(point_base)) {
           points.push_back(point_base);
+        } else {
+          ++excluded_points;
         }
       }
       angle += msg->angle_increment;
     }
+    diag_.lidar_icp_raw_points = raw_points;
+    diag_.lidar_icp_excluded_points = excluded_points;
+    diag_.lidar_icp_usable_points = static_cast<int>(points.size());
     if (points.empty()) {
       reset_lidar_icp_recovery();
       set_lidar_icp_skip_reason("empty_points");
@@ -995,13 +1028,13 @@ private:
     }
   }
 
-  void publish_static_board_to_leader_rear()
+  void publish_static_leader_rear_to_board()
   {
     geometry_msgs::msg::TransformStamped tf_msg;
     tf_msg.header.stamp = now();
-    tf_msg.header.frame_id = board_frame_;
-    tf_msg.child_frame_id = leader_rear_frame_;
-    const auto tf = transform_board_from_leader_rear();
+    tf_msg.header.frame_id = leader_rear_frame_;
+    tf_msg.child_frame_id = board_frame_;
+    const auto tf = transform_leader_rear_from_board();
     tf_msg.transform.rotation = quaternion_msg_from_eigen(Eigen::Quaterniond(tf.linear()));
     static_tf_broadcaster_->sendTransform(tf_msg);
   }
@@ -1012,6 +1045,9 @@ private:
     diag_.aruco_position_gate_m = aruco_position_gate_m_;
     diag_.aruco_position_covariance_scale = aruco_position_covariance_scale_;
     diag_.gyro_z_bias_radps = fixed_gyro_z_bias_radps_;
+    diag_.residual_gyro_z_bias_radps =
+      filter_ ? filter_->residual_gyro_z_bias_radps() : 0.0;
+    diag_.final_gyro_z_radps = diag_.corrected_gyro_z_radps - diag_.residual_gyro_z_bias_radps;
     diag_.gyro_bias_valid = gyro_bias_valid_;
     diag_.stationary_detected = stationary_detected_;
     diag_.calibration_status = calibration_status_;
@@ -1028,11 +1064,13 @@ private:
   DiagnosticsPublisher diagnostics_builder_;
   ArucoImuEskfDiagnostics diag_;
 
+  int64_t node_start_ns_{0};
   std::string board_frame_;
   std::string leader_rear_frame_;
   std::string base_frame_;
   std::string camera_frame_;
   bool publish_tf_{true};
+  double camera_tf_startup_grace_sec_{2.0};
   double reset_timeout_sec_{1.0};
   double vision_delay_buffer_sec_{2.0};
   double aruco_position_gate_m_{1.0};
