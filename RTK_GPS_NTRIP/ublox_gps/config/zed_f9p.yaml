@@ -4,7 +4,7 @@ ublox_gps_node:
     debug: 1                    # Range 0-4 (0 means no debug statements will print)
     device: /dev/ttyACM2
     
-    frame_id: gps
+    frame_id: follower/follower_gps
     rate: 8.0                   # in Hz
     nav_rate: 1                 
                                 
@@ -36,4 +36,3 @@ ublox_gps_node:
     
     publish:
       aid/all: false
-

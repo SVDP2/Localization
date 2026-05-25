@@ -2,6 +2,14 @@
 
 이 문서는 leader/follower 차량을 동시에 띄웠을 때 토픽, TF, GPS 좌표계, fusion 입력의 의미가 서로 어긋나지 않도록 고정하는 계약이다. 코드 구현은 이 계약을 기준으로 한다.
 
+> Outdoor P0 update: 현재 야외 RTK platooning의 우선 계약은
+> `Communication/docs/outdoor_rtk_platooning_foundation.md`이다. P0 outdoor
+> `map`은 고정 위경도 ENU가 아니라 active route CSV 첫 점을 원점으로 하는
+> local UTM-offset meter frame이다. Indoor relative localization은 기존
+> `leader/leader_rear -> follower/base_link` TF를 계속 쓸 수 있지만, outdoor
+> autonomous에서는 `map -> leader/base_link`와 `map -> follower/base_link`
+> sibling TF가 주 권한이고 relative ESKF TF는 꺼야 한다.
+
 ## 0. 핵심 원칙
 
 - Leader와 follower의 GPS 절대위치는 공통 `map` ENU frame에서 계산한다.
