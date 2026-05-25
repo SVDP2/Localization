@@ -2,7 +2,6 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch.substitutions import EnvironmentVariable
 from launch.actions import SetEnvironmentVariable
 
 def generate_launch_description():
@@ -23,8 +22,11 @@ def generate_launch_description():
           DeclareLaunchArgument('ca_cert',               default_value='None'),
           DeclareLaunchArgument('debug',                 default_value='true'),
           DeclareLaunchArgument('rtcm_message_package',  default_value='rtcm_msgs'),
+          DeclareLaunchArgument('ros_domain_id',         default_value='42'),
+          DeclareLaunchArgument('ntrip_namespace',       default_value='follower/ntrip_client'),
 
           # Pass an environment variable to the node
+          SetEnvironmentVariable(name='ROS_DOMAIN_ID', value=LaunchConfiguration('ros_domain_id')),
           SetEnvironmentVariable(name='NTRIP_CLIENT_DEBUG', value=LaunchConfiguration('debug')),
 
           # ******************************************************************
@@ -32,7 +34,7 @@ def generate_launch_description():
           # ******************************************************************
           Node(
                 name='ntrip_client_node',
-                namespace='ntrip_client',
+                namespace=LaunchConfiguration('ntrip_namespace'),
                 package='ntrip_client',
                 executable='ntrip_ros.py',
                 parameters=[

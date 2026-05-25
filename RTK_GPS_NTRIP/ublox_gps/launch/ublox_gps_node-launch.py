@@ -36,6 +36,7 @@ import os
 
 import ament_index_python.packages
 import launch
+import launch.actions
 import launch_ros.actions
 
 
@@ -47,9 +48,17 @@ def generate_launch_description():
     ublox_gps_node = launch_ros.actions.Node(package='ublox_gps',
                                              executable='ublox_gps_node',
                                              output='both',
-                                             parameters=[params])
+                                             parameters=[params],
+                                             remappings=[
+                                                 ('ntrip_client/rtcm',
+                                                  '/follower/ntrip_client/rtcm'),
+                                             ])
 
-    return launch.LaunchDescription([ublox_gps_node,
+    return launch.LaunchDescription([
+                                     launch.actions.SetEnvironmentVariable(
+                                         name='ROS_DOMAIN_ID', value='42'),
+
+                                     ublox_gps_node,
 
                                      launch.actions.RegisterEventHandler(
                                          event_handler=launch.event_handlers.OnProcessExit(

@@ -37,6 +37,7 @@ import os
 import ament_index_python.packages
 
 from launch import LaunchDescription
+from launch.actions import SetEnvironmentVariable
 from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
 
@@ -60,9 +61,15 @@ def generate_launch_description():
                     package='ublox_gps',
                     plugin='ublox_node::UbloxNode',
                     name='ublox_gps_node',
-                    parameters=[params]),
+                    parameters=[params],
+                    remappings=[
+                        ('ntrip_client/rtcm', '/follower/ntrip_client/rtcm'),
+                    ]),
             ],
             output='both',
     )
 
-    return LaunchDescription([container])
+    return LaunchDescription([
+        SetEnvironmentVariable(name='ROS_DOMAIN_ID', value='42'),
+        container,
+    ])
