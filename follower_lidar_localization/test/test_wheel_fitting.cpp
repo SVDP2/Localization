@@ -70,17 +70,34 @@ TEST(WheelFitting, FitsFourVisibleWheelSegments)
 }
 
 
-TEST(WheelFitting, LShapeInnerFaceHelpsConstrainWheelPose)
+TEST(WheelFitting, RearFacesAreDefaultModelSegments)
 {
   FitConfig config;
-  config.candidate_max_length_m = 0.32;
+
+  const auto model = make_leader_wheel_model(config);
+
+  ASSERT_EQ(model.size(), 4U);
+  EXPECT_EQ(model[0].name, "rear_left");
+  EXPECT_EQ(model[1].name, "rear_right");
+  EXPECT_EQ(model[2].name, "front_left");
+  EXPECT_EQ(model[3].name, "front_right");
+}
+
+TEST(WheelFitting, IrregularSideSegmentDoesNotPullRearFaceFit)
+{
+  FitConfig config;
   const Pose2 expected{1.10, -0.05, 0.10};
-  const auto points = sample_model_segments(config, expected, {0, 4});
+  auto points = sample_model_segments(config, expected, {0, 1, 2, 3});
+  auto side_segment = sample_segment(
+    transform_point(expected, {0.06, 0.28}),
+    transform_point(expected, {0.19, 0.21}),
+    7);
+  points.insert(points.end(), side_segment.begin(), side_segment.end());
 
   const auto result = fit_leader_wheel_pose(points, config, expected);
 
   ASSERT_TRUE(result.valid) << result.status;
-  EXPECT_GE(result.visible_segments, 2);
+  EXPECT_EQ(result.visible_segments, 4);
   EXPECT_NEAR(result.pose.x, expected.x, 0.04);
   EXPECT_NEAR(result.pose.y, expected.y, 0.04);
   EXPECT_NEAR(angle_distance(result.pose.yaw, expected.yaw), 0.0, 0.05);

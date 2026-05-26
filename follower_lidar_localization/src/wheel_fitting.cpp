@@ -156,10 +156,63 @@ ModelSegment transform_model_segment(const ModelSegment & segment, const Pose2 &
   return transformed;
 }
 
+Point2 inverse_transform_point(const Pose2 & pose, const Point2 & point)
+{
+  return rotate_point(point - Point2{pose.x, pose.y}, -pose.yaw);
+}
+
+int wheel_box_occupancy_count(
+  const Pose2 & pose,
+  const std::vector<ScanPoint2> & scan_points,
+  const FitConfig & config)
+{
+  if (!config.enable_wheel_box_occupancy_bonus || config.wheel_box_occupancy_bonus <= 0.0) {
+    return 0;
+  }
+
+  const double half_track = 0.5 * config.track_width_m;
+  const double half_width = 0.5 * config.wheel_width_m;
+  const double margin = std::max(0.0, config.wheel_box_margin_m);
+  const int min_points = std::max(1, config.wheel_box_min_points);
+  const std::array<Point2, 4> wheel_centers{
+    Point2{0.0, half_track},
+    Point2{0.0, -half_track},
+    Point2{config.wheelbase_m, half_track},
+    Point2{config.wheelbase_m, -half_track},
+  };
+  std::array<int, 4> point_counts{0, 0, 0, 0};
+
+  for (const auto & sample : scan_points) {
+    if (!sample.valid) {
+      continue;
+    }
+    const Point2 local = inverse_transform_point(pose, sample.point);
+    for (size_t i = 0; i < wheel_centers.size(); ++i) {
+      const auto & center = wheel_centers[i];
+      if (local.x >= center.x - config.wheel_radius_m - margin &&
+        local.x <= center.x + config.wheel_radius_m + margin &&
+        local.y >= center.y - half_width - margin &&
+        local.y <= center.y + half_width + margin)
+      {
+        point_counts[i] += 1;
+      }
+    }
+  }
+
+  int occupied = 0;
+  for (const int count : point_counts) {
+    if (count >= min_points) {
+      occupied += 1;
+    }
+  }
+  return occupied;
+}
+
 Hypothesis evaluate_pose(
   const Pose2 & pose,
   const std::vector<ModelSegment> & model,
   const std::vector<SegmentCandidate> & candidates,
+  const std::vector<ScanPoint2> & scan_points,
   const FitConfig & config,
   const std::optional<Pose2> & prior)
 {
@@ -227,6 +280,8 @@ Hypothesis evaluate_pose(
     score += config.prior_position_weight * pose_distance(pose, *prior);
     score += config.prior_yaw_weight * angle_distance(pose.yaw, prior->yaw);
   }
+  const int occupied_wheel_boxes = wheel_box_occupancy_count(pose, scan_points, config);
+  score -= config.wheel_box_occupancy_bonus * static_cast<double>(occupied_wheel_boxes);
   score -= 0.20 * static_cast<double>(hypothesis.visible_segments);
   hypothesis.score = score;
   return hypothesis;
@@ -348,14 +403,16 @@ FitResult fit_leader_wheel_pose(
     for (const auto & candidate : result.candidates) {
       for (const auto & pose : make_pair_hypotheses(model, candidate)) {
         hypotheses.push_back(
-          evaluate_pose(pose, result.model_segments, result.candidates, config, prior));
+          evaluate_pose(
+            pose, result.model_segments, result.candidates, scan_points, config, prior));
       }
     }
   }
 
   if (prior) {
     hypotheses.push_back(
-      evaluate_pose(*prior, result.model_segments, result.candidates, config, prior));
+      evaluate_pose(
+        *prior, result.model_segments, result.candidates, scan_points, config, prior));
   }
 
   auto best_it = std::max_element(

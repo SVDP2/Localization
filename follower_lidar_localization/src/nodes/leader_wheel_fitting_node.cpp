@@ -189,6 +189,11 @@ private:
     declare_parameter("min_visible_segments", 2);
     declare_parameter("assignment_max_center_distance_m", 0.180);
     declare_parameter("assignment_max_angle_error_deg", 37.0);
+    declare_parameter("enable_l_shape_segments", false);
+    declare_parameter("enable_wheel_box_occupancy_bonus", true);
+    declare_parameter("wheel_box_margin_m", 0.035);
+    declare_parameter("wheel_box_min_points", 2);
+    declare_parameter("wheel_box_occupancy_bonus", 0.025);
 
     declare_parameter("leader_rear_x_m", -0.275);
     declare_parameter("leader_rear_y_m", 0.0);
@@ -242,6 +247,14 @@ private:
       get_parameter("assignment_max_center_distance_m").as_double();
     fit_config_.assignment_max_angle_error_rad =
       deg_to_rad(get_parameter("assignment_max_angle_error_deg").as_double());
+    fit_config_.enable_l_shape_segments = get_parameter("enable_l_shape_segments").as_bool();
+    fit_config_.enable_wheel_box_occupancy_bonus =
+      get_parameter("enable_wheel_box_occupancy_bonus").as_bool();
+    fit_config_.wheel_box_margin_m = get_parameter("wheel_box_margin_m").as_double();
+    fit_config_.wheel_box_min_points =
+      static_cast<int>(get_parameter("wheel_box_min_points").as_int());
+    fit_config_.wheel_box_occupancy_bonus =
+      get_parameter("wheel_box_occupancy_bonus").as_double();
 
     leader_base_to_rear_.x = get_parameter("leader_rear_x_m").as_double();
     leader_base_to_rear_.y = get_parameter("leader_rear_y_m").as_double();

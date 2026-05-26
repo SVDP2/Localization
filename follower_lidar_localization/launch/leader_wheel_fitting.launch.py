@@ -45,6 +45,13 @@ def generate_launch_description() -> LaunchDescription:
     assignment_max_angle_error_deg = LaunchConfiguration(
         'assignment_max_angle_error_deg'
     )
+    enable_l_shape_segments = LaunchConfiguration('enable_l_shape_segments')
+    enable_wheel_box_occupancy_bonus = LaunchConfiguration(
+        'enable_wheel_box_occupancy_bonus'
+    )
+    wheel_box_margin_m = LaunchConfiguration('wheel_box_margin_m')
+    wheel_box_min_points = LaunchConfiguration('wheel_box_min_points')
+    wheel_box_occupancy_bonus = LaunchConfiguration('wheel_box_occupancy_bonus')
     leader_rear_x_m = LaunchConfiguration('leader_rear_x_m')
     leader_rear_y_m = LaunchConfiguration('leader_rear_y_m')
     leader_rear_z_m = LaunchConfiguration('leader_rear_z_m')
@@ -104,6 +111,11 @@ def generate_launch_description() -> LaunchDescription:
             default_value='0.180',
         ),
         DeclareLaunchArgument('assignment_max_angle_error_deg', default_value='37.0'),
+        DeclareLaunchArgument('enable_l_shape_segments', default_value='false'),
+        DeclareLaunchArgument('enable_wheel_box_occupancy_bonus', default_value='true'),
+        DeclareLaunchArgument('wheel_box_margin_m', default_value='0.035'),
+        DeclareLaunchArgument('wheel_box_min_points', default_value='2'),
+        DeclareLaunchArgument('wheel_box_occupancy_bonus', default_value='0.025'),
         DeclareLaunchArgument('leader_rear_x_m', default_value='-0.275'),
         DeclareLaunchArgument('leader_rear_y_m', default_value='0.0'),
         DeclareLaunchArgument('leader_rear_z_m', default_value='0.0525'),
@@ -213,6 +225,26 @@ def generate_launch_description() -> LaunchDescription:
                     ),
                     'assignment_max_angle_error_deg': ParameterValue(
                         assignment_max_angle_error_deg,
+                        value_type=float,
+                    ),
+                    'enable_l_shape_segments': ParameterValue(
+                        enable_l_shape_segments,
+                        value_type=bool,
+                    ),
+                    'enable_wheel_box_occupancy_bonus': ParameterValue(
+                        enable_wheel_box_occupancy_bonus,
+                        value_type=bool,
+                    ),
+                    'wheel_box_margin_m': ParameterValue(
+                        wheel_box_margin_m,
+                        value_type=float,
+                    ),
+                    'wheel_box_min_points': ParameterValue(
+                        wheel_box_min_points,
+                        value_type=int,
+                    ),
+                    'wheel_box_occupancy_bonus': ParameterValue(
+                        wheel_box_occupancy_bonus,
                         value_type=float,
                     ),
                     'leader_rear_x_m': ParameterValue(

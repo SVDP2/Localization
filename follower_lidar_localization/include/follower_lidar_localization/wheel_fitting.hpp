@@ -53,7 +53,11 @@ struct FitConfig
   double assignment_max_angle_error_rad{0.65};
   double prior_position_weight{0.25};
   double prior_yaw_weight{0.10};
-  bool enable_l_shape_segments{true};
+  bool enable_l_shape_segments{false};
+  bool enable_wheel_box_occupancy_bonus{true};
+  double wheel_box_margin_m{0.035};
+  int wheel_box_min_points{2};
+  double wheel_box_occupancy_bonus{0.025};
 };
 
 struct TrackerConfig
