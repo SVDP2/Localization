@@ -125,8 +125,6 @@ public:
     declare_parameter("pose_topic", "localization/relative/pose");
     declare_parameter("leader_base_odom_topic", "localization/leader_base/odom");
     declare_parameter("leader_base_pose_topic", "localization/leader_base/pose");
-    declare_parameter("leader_rear_odom_topic", "localization/leader_rear/odom");
-    declare_parameter("leader_rear_pose_topic", "localization/leader_rear/pose");
     declare_parameter("diagnostics_topic", "diagnostics");
     declare_parameter("lidar_scan_topic", "/follower/scan");
     declare_parameter("board_frame", "leader/board");
@@ -374,10 +372,6 @@ public:
       get_parameter("leader_base_odom_topic").as_string(), 10);
     leader_base_pose_pub_ = create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(
       get_parameter("leader_base_pose_topic").as_string(), 10);
-    leader_rear_odom_pub_ = create_publisher<nav_msgs::msg::Odometry>(
-      get_parameter("leader_rear_odom_topic").as_string(), 10);
-    leader_rear_pose_pub_ = create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(
-      get_parameter("leader_rear_pose_topic").as_string(), 10);
     diagnostics_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
       get_parameter("diagnostics_topic").as_string(), 10);
 
@@ -1296,8 +1290,7 @@ private:
 
     const auto stamp = time_msg_from_ns(now_ns);
     publish_outputs(
-      stamp, board_from_follower, board_cov, leader_rear_from_follower, leader_rear_cov,
-      leader_base_from_follower, leader_base_cov,
+      stamp, board_from_follower, board_cov, leader_base_from_follower, leader_base_cov,
       extrapolated.linear_velocity_base_mps(), extrapolated.angular_velocity_base_radps());
     diag_.filter_yaw_rad = yaw_from_quaternion(Eigen::Quaterniond(leader_base_from_follower.linear()));
   }
@@ -1337,8 +1330,6 @@ private:
     const builtin_interfaces::msg::Time & stamp,
     const Eigen::Isometry3d & board_from_base,
     const Eigen::Matrix<double, 6, 6> & board_cov,
-    const Eigen::Isometry3d & leader_rear_from_base,
-    const Eigen::Matrix<double, 6, 6> & leader_rear_cov,
     const Eigen::Isometry3d & leader_base_from_base,
     const Eigen::Matrix<double, 6, 6> & leader_base_cov,
     const Eigen::Vector3d & linear_velocity_base,
@@ -1361,15 +1352,6 @@ private:
     leader_base_pose.header = leader_base_odom.header;
     leader_base_pose.pose = leader_base_odom.pose;
     leader_base_pose_pub_->publish(leader_base_pose);
-
-    const auto leader_odom = make_odom(
-      stamp, leader_rear_frame_, base_frame_, leader_rear_from_base, leader_rear_cov,
-      linear_velocity_base, angular_velocity_base);
-    leader_rear_odom_pub_->publish(leader_odom);
-    geometry_msgs::msg::PoseWithCovarianceStamped leader_pose;
-    leader_pose.header = leader_odom.header;
-    leader_pose.pose = leader_odom.pose;
-    leader_rear_pose_pub_->publish(leader_pose);
 
     if (tf_broadcaster_) {
       geometry_msgs::msg::TransformStamped tf_msg;
@@ -1513,8 +1495,6 @@ private:
   rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr board_pose_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr leader_base_odom_pub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr leader_base_pose_pub_;
-  rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr leader_rear_odom_pub_;
-  rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr leader_rear_pose_pub_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_pub_;
   rclcpp::TimerBase::SharedPtr output_timer_;
   rclcpp::TimerBase::SharedPtr diagnostics_timer_;

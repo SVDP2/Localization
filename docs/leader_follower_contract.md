@@ -38,14 +38,11 @@ Current C++ ESKF output is leader-base centered.
 - Primary fused odom: `/follower/localization/leader_base/odom`
   - frame: `leader/base_link`
   - child: `follower/base_link`
-- Derived rear/reference odom: `/follower/localization/leader_rear/odom`
-  - frame: `leader/leader_rear`
-  - child: `follower/base_link`
 - Dynamic TF: `leader/base_link -> follower/base_link`
 - Detector input: `/follower/localization/aruco/board_pose`
 - Detector prior feedback: `/follower/localization/relative/pose`
 
-`leader_rear` remains important for ArUco board geometry and LiDAR prior/debug, but the final fused relative pose and controller bridge should use `leader/base_link` unless a node explicitly documents otherwise.
+`leader_rear` remains important for ArUco board geometry, but the external fused odometry and controller bridge use `leader/base_link`.
 
 ## Fusion source policy
 
@@ -115,7 +112,6 @@ Recommended candidate topics when comparing sources:
 | `/follower/scan` | `sensor_msgs/LaserScan` | LiDAR driver | follower 2D LiDAR scan |
 | `/follower/localization/aruco/board_pose` | `PoseWithCovarianceStamped` | ArUco detector | board/camera measurement |
 | `/follower/localization/leader_base/odom` | `nav_msgs/Odometry` | relative ESKF | fused `leader/base_link -> follower/base_link` |
-| `/follower/localization/leader_rear/odom` | `nav_msgs/Odometry` | relative ESKF | derived rear/reference odom |
 | `/follower/localization/lidar_wheels/leader_base_detection` | `nav_msgs/Odometry` | LiDAR wheel fitting | strict auxiliary leader-base detection |
 | `/follower/localization/lidar_wheels/markers` | `MarkerArray` | LiDAR wheel fitting | wheel/segment debug markers |
 | `/leader/localization/gps/odom` | `nav_msgs/Odometry` | leader GPS odom | `map -> leader/base_link` |

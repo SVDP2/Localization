@@ -50,7 +50,7 @@ front_right: x=+0.5875, y=-0.350
 | 입력 | 타입 | 의미 |
 |---|---|---|
 | `/follower/scan` | `sensor_msgs/LaserScan` | follower 2D LiDAR scan |
-| `/follower/localization/leader_rear/odom` | `nav_msgs/Odometry` optional | ArUco/IMU prior |
+| `/follower/localization/leader_base/odom` | `nav_msgs/Odometry` optional | ArUco/IMU prior |
 | TF `follower/base_link <- follower/lidar` | TF | scan point를 follower 기준으로 변환 |
 | TF/param `leader/base_link -> leader/leader_rear` | static geometry | leader base/rear 변환 |
 

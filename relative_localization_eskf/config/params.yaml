@@ -39,8 +39,6 @@ relative_localization_node:
     pose_topic: localization/relative/pose
     leader_base_odom_topic: localization/leader_base/odom
     leader_base_pose_topic: localization/leader_base/pose
-    leader_rear_odom_topic: localization/leader_rear/odom
-    leader_rear_pose_topic: localization/leader_rear/pose
     diagnostics_topic: diagnostics
     lidar_scan_topic: /follower/scan
     board_frame: leader/board
@@ -131,7 +129,7 @@ relative_localization_node:
 
 pose_rviz_marker_node:
   ros__parameters:
-    odom_topic: localization/leader_rear/odom
+    odom_topic: localization/leader_base/odom
     marker_topic: localization/relative/pose_markers
     marker_namespace: relative_pose_viz
     axis_line_width: 0.01

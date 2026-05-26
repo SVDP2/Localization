@@ -157,7 +157,7 @@ private:
   void declare_parameters()
   {
     declare_parameter("scan_topic", "/follower/scan");
-    declare_parameter("aruco_prior_topic", "/follower/localization/leader_rear/odom");
+    declare_parameter("aruco_prior_topic", "/follower/localization/leader_base/odom");
     declare_parameter("use_aruco_prior", true);
     declare_parameter("aruco_prior_timeout_sec", 0.50);
     declare_parameter("base_frame", "follower/base_link");
@@ -281,10 +281,15 @@ private:
   {
     const auto & p = msg->pose.pose.position;
     const auto & q = msg->pose.pose.orientation;
-    Pose2 leader_rear_from_follower{p.x, p.y, yaw_from_quaternion(q)};
-    const Pose2 follower_from_leader_rear = inverse_pose(leader_rear_from_follower);
-    const Pose2 leader_rear_from_leader_base = inverse_pose(leader_base_to_rear_);
-    latest_prior_ = compose_pose(follower_from_leader_rear, leader_rear_from_leader_base);
+    const Pose2 reference_from_follower{p.x, p.y, yaw_from_quaternion(q)};
+    const Pose2 follower_from_reference = inverse_pose(reference_from_follower);
+
+    if (msg->header.frame_id == leader_rear_frame_) {
+      const Pose2 leader_rear_from_leader_base = inverse_pose(leader_base_to_rear_);
+      latest_prior_ = compose_pose(follower_from_reference, leader_rear_from_leader_base);
+    } else {
+      latest_prior_ = follower_from_reference;
+    }
     latest_prior_stamp_ = rclcpp::Time(msg->header.stamp);
   }
 

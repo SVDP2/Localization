@@ -49,7 +49,7 @@ public:
   PoseRvizMarkerNode()
   : Node("pose_rviz_marker_node")
   {
-    declare_parameter("odom_topic", "localization/leader_rear/odom");
+    declare_parameter("odom_topic", "localization/leader_base/odom");
     declare_parameter("marker_topic", "localization/relative/pose_markers");
     declare_parameter("marker_namespace", "relative_pose_viz");
     declare_parameter("axis_line_width", 0.01);

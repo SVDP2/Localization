@@ -9,7 +9,7 @@
 - leader 차량 정지 상태에서 follower의 상대 위치/자세를 안정적으로 추정
 - 100 Hz gyro-led 예측 + 카메라 프레임율 vision update
 - 2026-05-20 manual platooning 실차 테스트에서
-  `/follower/localization/leader_rear/odom`이 `/platoon/relative_leader/state`
+  `/follower/localization/leader_base/odom`이 `/platoon/relative_leader/state`
   생성을 거쳐 follower signed-sync longitudinal controller의 실제 거리
   reference로 사용됨
 
@@ -186,7 +186,7 @@ python3 -m pytest test/ -v
 | `/localization/aruco/board_pose` | PoseWithCovarianceStamped | detector -> filter | board 기준 camera pose 측정 |
 | `/localization/relative/pose` | PoseWithCovarianceStamped | filter -> detector | ESKF filtered pose (prior 피드백) |
 | `/localization/relative/odom` | Odometry | 출력 | board 기준 filtered odom |
-| `/localization/leader_rear/odom` | Odometry | 출력 | leader_rear 기준 filtered odom (제어용) |
+| `/localization/leader_base/odom` | Odometry | 출력 | leader/base_link 기준 filtered odom |
 | `/localization/leader_rear/pose` | PoseWithCovarianceStamped | 출력 | leader_rear 기준 filtered pose |
 | `/localization/aruco/debug_image` | Image | 출력 | rectified 디버그 오버레이 이미지 |
 
@@ -271,4 +271,4 @@ python3 calibrate.py --device /dev/video0 --output cam_intrinsic.yaml
 | IMU 결합 | gyro-led ESKF 도입, 100 Hz 예측 출력, IMU TF lookup |
 | fusion 강화 | rotation gate 초과 시 full reject, anisotropic covariance, single-marker 비활성, prior timeout 분리, dead code 제거 |
 | rectification + prior | fisheye rectification 도입, ESKF pose -> detector prior 피드백, camera extrinsic TF 통합, orientation process noise 수정, iterative refinement + reference rotation gate |
-| manual platooning 연결 | `/follower/localization/leader_rear/odom`을 V2V motion/safety와 합쳐 `/platoon/relative_leader/state`로 변환하고, signed-sync controller가 target distance 약 0.58m 기준으로 duty shaping |
+| manual platooning 연결 | `/follower/localization/leader_base/odom`을 V2V motion/safety와 합쳐 `/platoon/relative_leader/state`로 변환하고, signed-sync controller가 target distance 약 0.58m 기준으로 duty shaping |

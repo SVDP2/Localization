@@ -71,7 +71,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('use_aruco_prior', default_value='true'),
         DeclareLaunchArgument(
             'aruco_prior_topic',
-            default_value='/follower/localization/leader_rear/odom',
+            default_value='/follower/localization/leader_base/odom',
         ),
         DeclareLaunchArgument(
             'leader_base_odom_topic',

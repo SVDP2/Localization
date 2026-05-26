@@ -190,8 +190,6 @@ def generate_launch_description():
                     'pose_topic': 'localization/relative/pose',
                     'leader_base_odom_topic': 'localization/leader_base/odom',
                     'leader_base_pose_topic': 'localization/leader_base/pose',
-                    'leader_rear_odom_topic': 'localization/leader_rear/odom',
-                    'leader_rear_pose_topic': 'localization/leader_rear/pose',
                     'diagnostics_topic': 'diagnostics',
                     'lidar_scan_topic': lidar_scan_topic,
                     'board_frame': _prefixed_frame(leader_frame_prefix, 'board'),
@@ -212,7 +210,7 @@ def generate_launch_description():
             parameters=[
                 pose_rviz_marker_params,
                 {
-                    'odom_topic': 'localization/leader_rear/odom',
+                    'odom_topic': 'localization/leader_base/odom',
                     'marker_topic': 'localization/relative/pose_markers',
                 },
             ],

@@ -455,7 +455,7 @@ void ArucoImuEskfDebugDisplay::onInitialize()
 
   auto rviz_ros_node = context_->getRosNodeAbstraction();
   odom_topic_property_ = std::make_unique<rviz_common::properties::RosTopicProperty>(
-    "ESKF Odom Topic", "/follower/localization/leader_rear/odom", "nav_msgs/msg/Odometry",
+    "ESKF Odom Topic", "/follower/localization/leader_base/odom", "nav_msgs/msg/Odometry",
     "Fused leader_rear -> base odometry", this, SLOT(topic_updated_odom()));
   odom_topic_property_->initialize(rviz_ros_node);
   imu_topic_property_ = std::make_unique<rviz_common::properties::RosTopicProperty>(
