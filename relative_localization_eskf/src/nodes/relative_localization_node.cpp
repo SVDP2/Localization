@@ -147,6 +147,7 @@ public:
     declare_parameter("aruco_max_position_variance_m2", 2.0);
     declare_parameter("aruco_max_yaw_variance_rad2", 0.50);
     declare_parameter("position_smoothing_alpha", 0.55);
+    declare_parameter("filter_min_position_variance_m2", 0.0025);
     declare_parameter("gyro_noise_std_radps", 0.05);
     declare_parameter("gyro_bias_noise_std_radps", 0.002);
     declare_parameter("initial_gyro_bias_std_radps", 0.02);
@@ -337,6 +338,8 @@ public:
 
     GyroRelativeEskfOptions filter_options;
     filter_options.position_smoothing_alpha = get_parameter("position_smoothing_alpha").as_double();
+    filter_options.min_position_variance =
+      std::max(get_parameter("filter_min_position_variance_m2").as_double(), 1.0e-6);
     filter_options.gyro_noise_std_radps = get_parameter("gyro_noise_std_radps").as_double();
     filter_options.gyro_bias_noise_std_radps =
       get_parameter("gyro_bias_noise_std_radps").as_double();

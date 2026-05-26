@@ -61,6 +61,7 @@ relative_localization_node:
     aruco_max_position_variance_m2: 2.0
     aruco_max_yaw_variance_rad2: 0.50
     position_smoothing_alpha: 0.55
+    filter_min_position_variance_m2: 0.0025
     gyro_noise_std_radps: 0.05
     gyro_bias_noise_std_radps: 0.002
     initial_gyro_bias_std_radps: 0.02
