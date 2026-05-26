@@ -37,11 +37,14 @@ relative_localization_node:
     board_pose_topic: localization/aruco/board_pose
     odom_topic: localization/relative/odom
     pose_topic: localization/relative/pose
+    leader_base_odom_topic: localization/leader_base/odom
+    leader_base_pose_topic: localization/leader_base/pose
     leader_rear_odom_topic: localization/leader_rear/odom
     leader_rear_pose_topic: localization/leader_rear/pose
     diagnostics_topic: diagnostics
     lidar_scan_topic: /follower/scan
     board_frame: leader/board
+    leader_base_frame: leader/base_link
     leader_rear_frame: leader/leader_rear
     base_frame: follower/base_link
     camera_frame: follower/usb_cam
@@ -49,8 +52,16 @@ relative_localization_node:
     output_rate_hz: 100.0
     reset_timeout_sec: 1.0
     vision_delay_buffer_sec: 2.0
-    aruco_position_gate_m: 1.0
-    aruco_position_covariance_scale: 0.35
+    aruco_position_gate_m: 0.75
+    aruco_position_covariance_scale: 2.0
+    enable_aruco_yaw_update: true
+    aruco_yaw_gate_deg: 20.0
+    aruco_yaw_covariance_scale: 2.0
+    aruco_position_mahalanobis_gate: 3.0
+    aruco_min_position_variance_m2: 0.0100
+    aruco_min_yaw_variance_rad2: 0.0100
+    aruco_max_position_variance_m2: 2.0
+    aruco_max_yaw_variance_rad2: 0.50
     position_smoothing_alpha: 0.55
     gyro_noise_std_radps: 0.05
     gyro_bias_noise_std_radps: 0.002
@@ -65,12 +76,12 @@ relative_localization_node:
     startup_calibration_max_abs_gyro_z_radps: 0.05
     startup_calibration_max_gyro_z_stddev_radps: 0.01
     require_stationary_for_startup_calibration: true
-    enable_lidar_icp_yaw: true
+    enable_lidar_icp_yaw: false
     lidar_icp_min_range_m: 0.15
     lidar_icp_max_range_m: 8.0
     lidar_icp_min_source_points: 45
     lidar_icp_yaw_var_rad2: 0.01
-    lidar_icp_yaw_gate_deg: 25.0
+    lidar_icp_yaw_gate_deg: 8.0
     lidar_icp_max_abs_yaw_rate_radps: 1.5
     lidar_icp_voxel_size_m: 0.10
     lidar_icp_max_points_per_voxel: 20
@@ -88,6 +99,35 @@ relative_localization_node:
     lidar_icp_recovery_yaw_var_scale: 8.0
     lidar_icp_recovery_max_yaw_rate_delta_radps: 0.35
     camera_tf_startup_grace_sec: 2.0
+    leader_base_to_rear_x_m: -0.275
+    leader_base_to_rear_y_m: 0.0
+    leader_base_to_rear_z_m: 0.0525
+    enable_lidar_wheel_pose_update: true
+    lidar_wheel_odom_topic: /follower/localization/lidar_wheels/leader_base_detection
+    lidar_wheel_pose_gate_m: 0.12
+    lidar_wheel_yaw_gate_deg: 8.0
+    enable_lidar_wheel_yaw_update: false
+    allow_lidar_wheel_initialization: false
+    lidar_wheel_position_mahalanobis_gate: 2.0
+    lidar_wheel_position_covariance_scale: 6.0
+    lidar_wheel_yaw_covariance_scale: 10.0
+    lidar_wheel_min_position_variance_m2: 0.0100
+    lidar_wheel_min_yaw_variance_rad2: 0.0300
+    lidar_wheel_max_position_variance_m2: 0.0200
+    lidar_wheel_max_yaw_variance_rad2: 0.0600
+    enable_gps_pose_update: true
+    gps_leader_odom_topic: /v2v/leader/odom
+    gps_follower_odom_topic: /follower/localization/global/odom
+    gps_pose_gate_m: 1.00
+    gps_yaw_gate_deg: 25.0
+    gps_odom_timeout_sec: 0.50
+    gps_position_mahalanobis_gate: 4.0
+    gps_position_covariance_scale: 1.0
+    gps_yaw_covariance_scale: 1.0
+    gps_min_position_variance_m2: 0.0025
+    gps_min_yaw_variance_rad2: 0.0100
+    gps_max_position_variance_m2: 1.0
+    gps_max_yaw_variance_rad2: 0.50
 
 pose_rviz_marker_node:
   ros__parameters:

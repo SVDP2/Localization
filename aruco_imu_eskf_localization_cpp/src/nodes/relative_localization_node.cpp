@@ -138,11 +138,16 @@ public:
     declare_parameter("output_rate_hz", 100.0);
     declare_parameter("reset_timeout_sec", 1.0);
     declare_parameter("vision_delay_buffer_sec", 2.0);
-    declare_parameter("aruco_position_gate_m", 1.0);
-    declare_parameter("aruco_position_covariance_scale", 0.35);
+    declare_parameter("aruco_position_gate_m", 0.75);
+    declare_parameter("aruco_position_covariance_scale", 2.0);
     declare_parameter("enable_aruco_yaw_update", true);
-    declare_parameter("aruco_yaw_gate_deg", 25.0);
-    declare_parameter("aruco_yaw_covariance_scale", 1.0);
+    declare_parameter("aruco_yaw_gate_deg", 20.0);
+    declare_parameter("aruco_yaw_covariance_scale", 2.0);
+    declare_parameter("aruco_position_mahalanobis_gate", 3.0);
+    declare_parameter("aruco_min_position_variance_m2", 0.0100);
+    declare_parameter("aruco_min_yaw_variance_rad2", 0.0100);
+    declare_parameter("aruco_max_position_variance_m2", 2.0);
+    declare_parameter("aruco_max_yaw_variance_rad2", 0.50);
     declare_parameter("position_smoothing_alpha", 0.55);
     declare_parameter("gyro_noise_std_radps", 0.05);
     declare_parameter("gyro_bias_noise_std_radps", 0.002);
@@ -157,12 +162,12 @@ public:
     declare_parameter("startup_calibration_max_abs_gyro_z_radps", 0.05);
     declare_parameter("startup_calibration_max_gyro_z_stddev_radps", 0.01);
     declare_parameter("require_stationary_for_startup_calibration", true);
-    declare_parameter("enable_lidar_icp_yaw", true);
+    declare_parameter("enable_lidar_icp_yaw", false);
     declare_parameter("lidar_icp_min_range_m", 0.15);
     declare_parameter("lidar_icp_max_range_m", 8.0);
     declare_parameter("lidar_icp_min_source_points", 45);
     declare_parameter("lidar_icp_yaw_var_rad2", 0.01);
-    declare_parameter("lidar_icp_yaw_gate_deg", 25.0);
+    declare_parameter("lidar_icp_yaw_gate_deg", 8.0);
     declare_parameter("lidar_icp_max_abs_yaw_rate_radps", 1.5);
     declare_parameter("lidar_icp_voxel_size_m", 0.10);
     declare_parameter("lidar_icp_max_points_per_voxel", 20);
@@ -185,14 +190,30 @@ public:
     declare_parameter("leader_base_to_rear_z_m", 0.0525);
     declare_parameter("enable_lidar_wheel_pose_update", true);
     declare_parameter("lidar_wheel_odom_topic", "/follower/localization/lidar_wheels/leader_base_detection");
-    declare_parameter("lidar_wheel_pose_gate_m", 0.30);
-    declare_parameter("lidar_wheel_yaw_gate_deg", 25.0);
-    declare_parameter("enable_gps_pose_update", false);
+    declare_parameter("lidar_wheel_pose_gate_m", 0.12);
+    declare_parameter("lidar_wheel_yaw_gate_deg", 8.0);
+    declare_parameter("enable_lidar_wheel_yaw_update", false);
+    declare_parameter("allow_lidar_wheel_initialization", false);
+    declare_parameter("lidar_wheel_position_mahalanobis_gate", 2.0);
+    declare_parameter("lidar_wheel_position_covariance_scale", 6.0);
+    declare_parameter("lidar_wheel_yaw_covariance_scale", 10.0);
+    declare_parameter("lidar_wheel_min_position_variance_m2", 0.0100);
+    declare_parameter("lidar_wheel_min_yaw_variance_rad2", 0.0300);
+    declare_parameter("lidar_wheel_max_position_variance_m2", 0.0200);
+    declare_parameter("lidar_wheel_max_yaw_variance_rad2", 0.0600);
+    declare_parameter("enable_gps_pose_update", true);
     declare_parameter("gps_leader_odom_topic", "/v2v/leader/odom");
     declare_parameter("gps_follower_odom_topic", "/follower/localization/global/odom");
-    declare_parameter("gps_pose_gate_m", 1.50);
-    declare_parameter("gps_yaw_gate_deg", 30.0);
+    declare_parameter("gps_pose_gate_m", 1.00);
+    declare_parameter("gps_yaw_gate_deg", 25.0);
     declare_parameter("gps_odom_timeout_sec", 0.50);
+    declare_parameter("gps_position_mahalanobis_gate", 4.0);
+    declare_parameter("gps_position_covariance_scale", 1.0);
+    declare_parameter("gps_yaw_covariance_scale", 1.0);
+    declare_parameter("gps_min_position_variance_m2", 0.0025);
+    declare_parameter("gps_min_yaw_variance_rad2", 0.0100);
+    declare_parameter("gps_max_position_variance_m2", 1.0);
+    declare_parameter("gps_max_yaw_variance_rad2", 0.50);
 
     board_frame_ = get_parameter("board_frame").as_string();
     leader_base_frame_ = get_parameter("leader_base_frame").as_string();
@@ -210,6 +231,16 @@ public:
       std::max(get_parameter("aruco_yaw_gate_deg").as_double(), 0.0) * M_PI / 180.0;
     aruco_yaw_covariance_scale_ = std::clamp(
       get_parameter("aruco_yaw_covariance_scale").as_double(), 0.02, 100.0);
+    aruco_position_mahalanobis_gate_ =
+      std::max(get_parameter("aruco_position_mahalanobis_gate").as_double(), 0.0);
+    aruco_min_position_variance_m2_ =
+      std::max(get_parameter("aruco_min_position_variance_m2").as_double(), 1.0e-5);
+    aruco_min_yaw_variance_rad2_ =
+      std::max(get_parameter("aruco_min_yaw_variance_rad2").as_double(), 1.0e-9);
+    aruco_max_position_variance_m2_ =
+      std::max(get_parameter("aruco_max_position_variance_m2").as_double(), 0.0);
+    aruco_max_yaw_variance_rad2_ =
+      std::max(get_parameter("aruco_max_yaw_variance_rad2").as_double(), 0.0);
     fixed_gyro_z_bias_radps_ = get_parameter("gyro_z_bias_radps").as_double();
     enable_startup_gyro_bias_calibration_ =
       get_parameter("enable_startup_gyro_bias_calibration").as_bool();
@@ -270,11 +301,41 @@ public:
     lidar_wheel_pose_gate_m_ = std::max(get_parameter("lidar_wheel_pose_gate_m").as_double(), 0.0);
     lidar_wheel_yaw_gate_rad_ =
       std::max(get_parameter("lidar_wheel_yaw_gate_deg").as_double(), 0.0) * M_PI / 180.0;
+    enable_lidar_wheel_yaw_update_ = get_parameter("enable_lidar_wheel_yaw_update").as_bool();
+    allow_lidar_wheel_initialization_ = get_parameter("allow_lidar_wheel_initialization").as_bool();
+    lidar_wheel_position_mahalanobis_gate_ =
+      std::max(get_parameter("lidar_wheel_position_mahalanobis_gate").as_double(), 0.0);
+    lidar_wheel_position_covariance_scale_ =
+      std::max(get_parameter("lidar_wheel_position_covariance_scale").as_double(), 1.0e-3);
+    lidar_wheel_yaw_covariance_scale_ =
+      std::max(get_parameter("lidar_wheel_yaw_covariance_scale").as_double(), 1.0e-3);
+    lidar_wheel_min_position_variance_m2_ =
+      std::max(get_parameter("lidar_wheel_min_position_variance_m2").as_double(), 1.0e-5);
+    lidar_wheel_min_yaw_variance_rad2_ =
+      std::max(get_parameter("lidar_wheel_min_yaw_variance_rad2").as_double(), 1.0e-9);
+    lidar_wheel_max_position_variance_m2_ =
+      std::max(get_parameter("lidar_wheel_max_position_variance_m2").as_double(), 0.0);
+    lidar_wheel_max_yaw_variance_rad2_ =
+      std::max(get_parameter("lidar_wheel_max_yaw_variance_rad2").as_double(), 0.0);
     enable_gps_pose_update_ = get_parameter("enable_gps_pose_update").as_bool();
     gps_pose_gate_m_ = std::max(get_parameter("gps_pose_gate_m").as_double(), 0.0);
     gps_yaw_gate_rad_ =
       std::max(get_parameter("gps_yaw_gate_deg").as_double(), 0.0) * M_PI / 180.0;
     gps_odom_timeout_sec_ = std::max(get_parameter("gps_odom_timeout_sec").as_double(), 0.0);
+    gps_position_mahalanobis_gate_ =
+      std::max(get_parameter("gps_position_mahalanobis_gate").as_double(), 0.0);
+    gps_position_covariance_scale_ =
+      std::max(get_parameter("gps_position_covariance_scale").as_double(), 1.0e-3);
+    gps_yaw_covariance_scale_ =
+      std::max(get_parameter("gps_yaw_covariance_scale").as_double(), 1.0e-3);
+    gps_min_position_variance_m2_ =
+      std::max(get_parameter("gps_min_position_variance_m2").as_double(), 1.0e-5);
+    gps_min_yaw_variance_rad2_ =
+      std::max(get_parameter("gps_min_yaw_variance_rad2").as_double(), 1.0e-9);
+    gps_max_position_variance_m2_ =
+      std::max(get_parameter("gps_max_position_variance_m2").as_double(), 0.0);
+    gps_max_yaw_variance_rad2_ =
+      std::max(get_parameter("gps_max_yaw_variance_rad2").as_double(), 0.0);
 
     GyroRelativeEskfOptions filter_options;
     filter_options.position_smoothing_alpha = get_parameter("position_smoothing_alpha").as_double();
@@ -336,6 +397,19 @@ public:
       lidar_scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
         get_parameter("lidar_scan_topic").as_string(), rclcpp::SensorDataQoS(),
         [this](sensor_msgs::msg::LaserScan::ConstSharedPtr msg) {lidar_scan_callback(msg);});
+    }
+    if (enable_lidar_wheel_pose_update_) {
+      lidar_wheel_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+        get_parameter("lidar_wheel_odom_topic").as_string(), rclcpp::SensorDataQoS(),
+        [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) {lidar_wheel_odom_callback(msg);});
+    }
+    if (enable_gps_pose_update_) {
+      gps_leader_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+        get_parameter("gps_leader_odom_topic").as_string(), rclcpp::SensorDataQoS(),
+        [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) {gps_leader_odom_callback(msg);});
+      gps_follower_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+        get_parameter("gps_follower_odom_topic").as_string(), rclcpp::SensorDataQoS(),
+        [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) {gps_follower_odom_callback(msg);});
     }
 
     const double output_rate = std::max(get_parameter("output_rate_hz").as_double(), 1.0);
@@ -475,17 +549,46 @@ private:
     const Eigen::Isometry3d & leader_from_base,
     const Eigen::Matrix<double, 6, 6> & covariance,
     double position_gate_m,
+    double position_mahalanobis_gate,
     double yaw_gate_rad,
     bool use_yaw,
+    bool allow_initialize,
+    double position_covariance_scale,
+    double yaw_covariance_scale,
+    double min_position_variance,
+    double min_yaw_variance,
+    double max_position_variance,
+    double max_yaw_variance,
     const std::string & source_name)
   {
+    const double raw_x_var = covariance_value(covariance, 0, 0, min_position_variance);
+    const double raw_y_var = covariance_value(covariance, 1, 1, min_position_variance);
+    const double raw_yaw_var = covariance_value(covariance, 5, 5, min_yaw_variance);
+    const double raw_max_position_var = std::max(raw_x_var, raw_y_var);
+    if (max_position_variance > 0.0 && raw_max_position_var > max_position_variance) {
+      return {false, source_name + "_position_covariance_gate"};
+    }
+    if (use_yaw && max_yaw_variance > 0.0 && raw_yaw_var > max_yaw_variance) {
+      return {false, source_name + "_yaw_covariance_gate"};
+    }
+
     Eigen::Matrix3d pos_cov = covariance.block<3, 3>(0, 0);
-    pos_cov(0, 0) = std::max(pos_cov(0, 0), filter_options_.min_position_variance);
-    pos_cov(1, 1) = std::max(pos_cov(1, 1), filter_options_.min_position_variance);
+    pos_cov(0, 0) = std::max(raw_x_var, min_position_variance);
+    pos_cov(1, 1) = std::max(raw_y_var, min_position_variance);
+    pos_cov(2, 2) = std::max(covariance_value(covariance, 2, 2, 1.0), min_position_variance);
+    if (!std::isfinite(pos_cov(0, 1)) || !std::isfinite(pos_cov(1, 0))) {
+      pos_cov(0, 1) = 0.0;
+      pos_cov(1, 0) = 0.0;
+    }
+    pos_cov *= std::max(position_covariance_scale, 1.0e-3);
     const double yaw = yaw_from_rotation(leader_from_base.linear());
-    const double yaw_var = std::max(covariance_value(covariance, 5, 5, 0.05), 1.0e-9);
+    const double yaw_var = std::max(raw_yaw_var, min_yaw_variance) *
+      std::max(yaw_covariance_scale, 1.0e-3);
 
     if (!filter_->initialized()) {
+      if (!allow_initialize) {
+        return {false, source_name + "_init_blocked"};
+      }
       if (use_yaw) {
         filter_->initialize_pose(ns, leader_from_base.translation(), pos_cov, yaw, yaw_var);
       } else {
@@ -494,6 +597,23 @@ private:
       record_snapshot();
       prune_history(ns);
       return {true, source_name + "_initialized"};
+    }
+
+    const Eigen::Vector2d residual = leader_from_base.translation().head<2>() -
+      filter_->pose_matrix().translation().head<2>();
+    if (position_mahalanobis_gate > 0.0) {
+      const Eigen::Matrix2d innovation_cov =
+        filter_->pose_covariance().block<2, 2>(0, 0) + pos_cov.block<2, 2>(0, 0);
+      if (!innovation_cov.allFinite() || std::abs(innovation_cov.determinant()) < 1.0e-18) {
+        return {false, source_name + "_invalid_innovation_covariance"};
+      }
+      const double nis = residual.transpose() * innovation_cov.inverse() * residual;
+      if (!std::isfinite(nis) || nis < 0.0) {
+        return {false, source_name + "_invalid_position_mahalanobis"};
+      }
+      if (std::sqrt(nis) > position_mahalanobis_gate) {
+        return {false, source_name + "_position_mahalanobis_gate"};
+      }
     }
 
     PositionUpdateResult pos_update;
@@ -974,12 +1094,9 @@ private:
     Eigen::Matrix<double, 6, 6> leader_cov = transform_pose_covariance(
       transform_pose_covariance(covariance_from_msg(*msg), transform_leader_rear_from_board()),
       leader_base_from_leader_rear());
-    leader_cov.block<3, 3>(0, 0) *= aruco_position_covariance_scale_;
-    leader_cov(5, 5) *= aruco_yaw_covariance_scale_;
-
     const bool stale = !last_vision_stamp_ns_ ||
       (ns - *last_vision_stamp_ns_) > static_cast<int64_t>(reset_timeout_sec_ * 1.0e9);
-    if (stale) {
+    if (stale && !enable_gps_pose_update_) {
       filter_->reset();
       state_history_.clear();
       lidar_icp_initialized_ = false;
@@ -993,8 +1110,11 @@ private:
       (leader_from_base.translation().head<2>() -
       filter_->pose_matrix().translation().head<2>()).norm() : 0.0;
     const auto outcome = apply_pose_measurement(
-      ns, leader_from_base, leader_cov, aruco_position_gate_m_, aruco_yaw_gate_rad_,
-      enable_aruco_yaw_update_, "aruco");
+      ns, leader_from_base, leader_cov, aruco_position_gate_m_,
+      aruco_position_mahalanobis_gate_, aruco_yaw_gate_rad_, enable_aruco_yaw_update_, true,
+      aruco_position_covariance_scale_, aruco_yaw_covariance_scale_,
+      aruco_min_position_variance_m2_, aruco_min_yaw_variance_rad2_,
+      aruco_max_position_variance_m2_, aruco_max_yaw_variance_rad2_, "aruco");
 
     last_vision_stamp_ns_ = ns;
     diag_.aruco_update_applied = outcome.first;
@@ -1015,8 +1135,12 @@ private:
     const Eigen::Matrix<double, 6, 6> leader_cov =
       transform_pose_covariance(covariance_from_odom(*msg), leader_from_base);
     const auto outcome = apply_pose_measurement(
-      ns, leader_from_base, leader_cov, lidar_wheel_pose_gate_m_, lidar_wheel_yaw_gate_rad_,
-      true, "lidar_wheel");
+      ns, leader_from_base, leader_cov, lidar_wheel_pose_gate_m_,
+      lidar_wheel_position_mahalanobis_gate_, lidar_wheel_yaw_gate_rad_,
+      enable_lidar_wheel_yaw_update_, allow_lidar_wheel_initialization_,
+      lidar_wheel_position_covariance_scale_, lidar_wheel_yaw_covariance_scale_,
+      lidar_wheel_min_position_variance_m2_, lidar_wheel_min_yaw_variance_rad2_,
+      lidar_wheel_max_position_variance_m2_, lidar_wheel_max_yaw_variance_rad2_, "lidar_wheel");
     if (!outcome.first) {
       diag_.last_skip_reason = outcome.second;
     }
@@ -1079,7 +1203,10 @@ private:
       covariance_value(follower_cov, 5, 5, 0.25);
 
     const auto outcome = apply_pose_measurement(
-      ns, leader_from_base, cov, gps_pose_gate_m_, gps_yaw_gate_rad_, true, "gps");
+      ns, leader_from_base, cov, gps_pose_gate_m_, gps_position_mahalanobis_gate_,
+      gps_yaw_gate_rad_, true, true, gps_position_covariance_scale_, gps_yaw_covariance_scale_,
+      gps_min_position_variance_m2_, gps_min_yaw_variance_rad2_,
+      gps_max_position_variance_m2_, gps_max_yaw_variance_rad2_, "gps");
     if (!outcome.first) {
       diag_.last_skip_reason = outcome.second;
     }
@@ -1304,19 +1431,40 @@ private:
   double leader_base_to_rear_y_m_{0.0};
   double leader_base_to_rear_z_m_{0.0525};
   bool enable_lidar_wheel_pose_update_{true};
-  double lidar_wheel_pose_gate_m_{0.30};
-  double lidar_wheel_yaw_gate_rad_{25.0 * M_PI / 180.0};
-  bool enable_gps_pose_update_{false};
-  double gps_pose_gate_m_{1.50};
-  double gps_yaw_gate_rad_{30.0 * M_PI / 180.0};
+  double lidar_wheel_pose_gate_m_{0.12};
+  double lidar_wheel_yaw_gate_rad_{8.0 * M_PI / 180.0};
+  bool enable_lidar_wheel_yaw_update_{false};
+  bool allow_lidar_wheel_initialization_{false};
+  double lidar_wheel_position_mahalanobis_gate_{2.0};
+  double lidar_wheel_position_covariance_scale_{6.0};
+  double lidar_wheel_yaw_covariance_scale_{10.0};
+  double lidar_wheel_min_position_variance_m2_{0.0100};
+  double lidar_wheel_min_yaw_variance_rad2_{0.0300};
+  double lidar_wheel_max_position_variance_m2_{0.0200};
+  double lidar_wheel_max_yaw_variance_rad2_{0.0600};
+  bool enable_gps_pose_update_{true};
+  double gps_pose_gate_m_{1.00};
+  double gps_yaw_gate_rad_{25.0 * M_PI / 180.0};
   double gps_odom_timeout_sec_{0.50};
+  double gps_position_mahalanobis_gate_{4.0};
+  double gps_position_covariance_scale_{1.0};
+  double gps_yaw_covariance_scale_{1.0};
+  double gps_min_position_variance_m2_{0.0025};
+  double gps_min_yaw_variance_rad2_{0.0100};
+  double gps_max_position_variance_m2_{1.0};
+  double gps_max_yaw_variance_rad2_{0.50};
   double reset_timeout_sec_{1.0};
   double vision_delay_buffer_sec_{2.0};
-  double aruco_position_gate_m_{1.0};
-  double aruco_position_covariance_scale_{0.35};
+  double aruco_position_gate_m_{0.75};
+  double aruco_position_covariance_scale_{2.0};
+  double aruco_position_mahalanobis_gate_{3.0};
+  double aruco_min_position_variance_m2_{0.0100};
+  double aruco_min_yaw_variance_rad2_{0.0100};
+  double aruco_max_position_variance_m2_{2.0};
+  double aruco_max_yaw_variance_rad2_{0.50};
   bool enable_aruco_yaw_update_{true};
-  double aruco_yaw_gate_rad_{25.0 * M_PI / 180.0};
-  double aruco_yaw_covariance_scale_{1.0};
+  double aruco_yaw_gate_rad_{20.0 * M_PI / 180.0};
+  double aruco_yaw_covariance_scale_{2.0};
   double fixed_gyro_z_bias_radps_{0.0};
   bool enable_startup_gyro_bias_calibration_{true};
   double startup_calibration_duration_sec_{2.0};
@@ -1329,12 +1477,12 @@ private:
   std::string calibration_status_{"collecting"};
   std::deque<double> startup_gyro_z_samples_;
   std::optional<int64_t> startup_calibration_start_ns_;
-  bool enable_lidar_icp_yaw_{true};
+  bool enable_lidar_icp_yaw_{false};
   double lidar_icp_min_range_m_{0.15};
   double lidar_icp_max_range_m_{8.0};
   int lidar_icp_min_source_points_{80};
   double lidar_icp_yaw_var_rad2_{0.05};
-  double lidar_icp_yaw_gate_rad_{12.0 * M_PI / 180.0};
+  double lidar_icp_yaw_gate_rad_{8.0 * M_PI / 180.0};
   double lidar_icp_max_abs_yaw_rate_radps_{1.5};
   bool lidar_icp_exclude_leader_box_{true};
   double lidar_icp_exclude_x_min_m_{0.10};
