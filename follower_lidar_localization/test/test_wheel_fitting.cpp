@@ -28,6 +28,23 @@ std::vector<ScanPoint2> sample_segment(
   return points;
 }
 
+
+std::vector<ScanPoint2> sample_segment_centered(
+  const Point2 & center,
+  double length,
+  double yaw,
+  int count)
+{
+  const Point2 direction{std::cos(yaw), std::sin(yaw)};
+  const Point2 start{
+    center.x - 0.5 * length * direction.x,
+    center.y - 0.5 * length * direction.y};
+  const Point2 end{
+    center.x + 0.5 * length * direction.x,
+    center.y + 0.5 * length * direction.y};
+  return sample_segment(start, end, count);
+}
+
 std::vector<ScanPoint2> sample_model_segments(
   const FitConfig & config,
   const Pose2 & pose,
@@ -101,6 +118,38 @@ TEST(WheelFitting, IrregularSideSegmentDoesNotPullRearFaceFit)
   EXPECT_NEAR(result.pose.x, expected.x, 0.04);
   EXPECT_NEAR(result.pose.y, expected.y, 0.04);
   EXPECT_NEAR(angle_distance(result.pose.yaw, expected.yaw), 0.0, 0.05);
+}
+
+
+TEST(WheelFitting, NoisyRearFaceAnglesStillUseWheelCenters)
+{
+  FitConfig config;
+  const Pose2 expected{1.05, -0.08, 0.04};
+  const auto model = make_leader_wheel_model(config);
+  const std::array<double, 4> yaw_offsets{
+    -0.18,
+    0.12,
+    -0.10,
+    0.16,
+  };
+  std::vector<ScanPoint2> points;
+  for (size_t i = 0; i < yaw_offsets.size(); ++i) {
+    const Point2 center = transform_point(expected, model[i].center);
+    auto segment_points = sample_segment_centered(
+      center,
+      model[i].length,
+      expected.yaw + 0.5 * M_PI + yaw_offsets[i],
+      7);
+    points.insert(points.end(), segment_points.begin(), segment_points.end());
+  }
+
+  const auto result = fit_leader_wheel_pose(points, config, expected);
+
+  ASSERT_TRUE(result.valid) << result.status;
+  EXPECT_EQ(result.visible_segments, 4);
+  EXPECT_NEAR(result.pose.x, expected.x, 0.03);
+  EXPECT_NEAR(result.pose.y, expected.y, 0.03);
+  EXPECT_NEAR(angle_distance(result.pose.yaw, expected.yaw), 0.0, 0.04);
 }
 
 TEST(WheelFitting, PriorDisambiguatesTwoRearSegments)

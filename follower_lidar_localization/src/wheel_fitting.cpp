@@ -287,22 +287,26 @@ Hypothesis evaluate_pose(
   return hypothesis;
 }
 
-std::vector<Pose2> make_pair_hypotheses(
-  const ModelSegment & model,
-  const SegmentCandidate & candidate)
+std::optional<Pose2> make_center_pair_hypothesis(
+  const ModelSegment & model_a,
+  const ModelSegment & model_b,
+  const SegmentCandidate & candidate_a,
+  const SegmentCandidate & candidate_b)
 {
-  std::vector<Pose2> hypotheses;
-  const double model_angle = angle_of(model.direction);
-  const double candidate_angle = angle_of(candidate.direction);
-  for (const double direction_flip : {0.0, kPi}) {
-    Pose2 pose;
-    pose.yaw = normalize_angle(candidate_angle + direction_flip - model_angle);
-    const Point2 rotated_model_center = rotate_point(model.center, pose.yaw);
-    pose.x = candidate.center.x - rotated_model_center.x;
-    pose.y = candidate.center.y - rotated_model_center.y;
-    hypotheses.push_back(pose);
+  const Point2 model_delta = model_b.center - model_a.center;
+  const Point2 candidate_delta = candidate_b.center - candidate_a.center;
+  if (norm(model_delta) < 1.0e-6 || norm(candidate_delta) < 1.0e-6) {
+    return std::nullopt;
   }
-  return hypotheses;
+
+  Pose2 pose;
+  pose.yaw = normalize_angle(angle_of(candidate_delta) - angle_of(model_delta));
+  const Point2 model_mid = (model_a.center + model_b.center) * 0.5;
+  const Point2 candidate_mid = (candidate_a.center + candidate_b.center) * 0.5;
+  const Point2 rotated_model_mid = rotate_point(model_mid, pose.yaw);
+  pose.x = candidate_mid.x - rotated_model_mid.x;
+  pose.y = candidate_mid.y - rotated_model_mid.y;
+  return pose;
 }
 
 }  // namespace
@@ -399,12 +403,22 @@ FitResult fit_leader_wheel_pose(
   }
 
   std::vector<Hypothesis> hypotheses;
-  for (const auto & model : result.model_segments) {
-    for (const auto & candidate : result.candidates) {
-      for (const auto & pose : make_pair_hypotheses(model, candidate)) {
-        hypotheses.push_back(
-          evaluate_pose(
-            pose, result.model_segments, result.candidates, scan_points, config, prior));
+  for (size_t model_a = 0; model_a < result.model_segments.size(); ++model_a) {
+    for (size_t model_b = model_a + 1; model_b < result.model_segments.size(); ++model_b) {
+      for (size_t candidate_a = 0; candidate_a < result.candidates.size(); ++candidate_a) {
+        for (size_t candidate_b = 0; candidate_b < result.candidates.size(); ++candidate_b) {
+          if (candidate_a == candidate_b) {
+            continue;
+          }
+          const auto pose = make_center_pair_hypothesis(
+            result.model_segments[model_a], result.model_segments[model_b],
+            result.candidates[candidate_a], result.candidates[candidate_b]);
+          if (pose) {
+            hypotheses.push_back(
+              evaluate_pose(
+                *pose, result.model_segments, result.candidates, scan_points, config, prior));
+          }
+        }
       }
     }
   }

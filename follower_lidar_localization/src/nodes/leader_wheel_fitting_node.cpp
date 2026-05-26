@@ -15,6 +15,7 @@
 #include <visualization_msgs/msg/marker_array.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <optional>
@@ -440,6 +441,7 @@ private:
     add_candidate_marker(array, scan, result, id);
     if (tracker_output.has_pose && tracker_output.mode != TrackerMode::Lost) {
       add_model_marker(array, scan, tracker_output, result, id);
+      add_wheel_box_marker(array, scan, tracker_output, id);
       add_pose_text_marker(array, scan, tracker_output, result, id);
     }
     marker_pub_->publish(array);
@@ -505,6 +507,50 @@ private:
         model_end);
       marker.points.push_back(point(start.x, start.y));
       marker.points.push_back(point(end.x, end.y));
+    }
+    array.markers.push_back(marker);
+  }
+
+  void add_wheel_box_marker(
+    visualization_msgs::msg::MarkerArray & array,
+    const sensor_msgs::msg::LaserScan & scan,
+    const TrackerOutput & tracker_output,
+    int & id) const
+  {
+    visualization_msgs::msg::Marker marker;
+    marker.header.stamp = scan.header.stamp;
+    marker.header.frame_id = base_frame_;
+    marker.ns = "leader_wheel_fitting/wheel_boxes";
+    marker.id = id++;
+    marker.type = visualization_msgs::msg::Marker::LINE_LIST;
+    marker.action = visualization_msgs::msg::Marker::ADD;
+    marker.scale.x = 0.012;
+    marker.color = color(0.10, 1.0, 0.65, 0.65);
+    marker.lifetime.sec = 0;
+    marker.lifetime.nanosec = 300000000;
+
+    const double half_track = 0.5 * fit_config_.track_width_m;
+    const double half_width = 0.5 * fit_config_.wheel_width_m;
+    const std::array<Point2, 4> centers{
+      Point2{0.0, half_track},
+      Point2{0.0, -half_track},
+      Point2{fit_config_.wheelbase_m, half_track},
+      Point2{fit_config_.wheelbase_m, -half_track},
+    };
+    for (const auto & center : centers) {
+      const std::array<Point2, 4> corners{
+        Point2{center.x - fit_config_.wheel_radius_m, center.y - half_width},
+        Point2{center.x + fit_config_.wheel_radius_m, center.y - half_width},
+        Point2{center.x + fit_config_.wheel_radius_m, center.y + half_width},
+        Point2{center.x - fit_config_.wheel_radius_m, center.y + half_width},
+      };
+      for (size_t i = 0; i < corners.size(); ++i) {
+        const Point2 a = transform_point(tracker_output.pose, corners[i]);
+        const Point2 b = transform_point(
+          tracker_output.pose, corners[(i + 1) % corners.size()]);
+        marker.points.push_back(point(a.x, a.y, 0.01));
+        marker.points.push_back(point(b.x, b.y, 0.01));
+      }
     }
     array.markers.push_back(marker);
   }
