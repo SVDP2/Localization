@@ -70,13 +70,19 @@ constexpr std::array<StateCell, 15> kDetectorStates{{
   {"unknown", "Unknown", StateGroup::Warning},
 }};
 
-constexpr std::array<StateCell, 7> kArucoStates{{
+constexpr std::array<StateCell, 13> kArucoStates{{
+  {"aruco_initialized", "Init", StateGroup::Applied},
+  {"aruco_pose_update", "Pose", StateGroup::Applied},
+  {"aruco_position_ok_yaw_rejected", "Pos", StateGroup::Applied},
   {"initialized_translation_only", "Init XYZ", StateGroup::Applied},
   {"aruco_position_smoothing", "Pos Upd", StateGroup::Applied},
   {"not_received", "No Rx", StateGroup::Neutral},
   {"out_of_order", "Order", StateGroup::Rejected},
   {"outside_history", "History", StateGroup::Rejected},
   {"not_initialized", "No Init", StateGroup::Rejected},
+  {"covariance_gate", "Cov", StateGroup::Rejected},
+  {"position_gate", "Pos Gate", StateGroup::Rejected},
+  {"invalid", "Invalid", StateGroup::Rejected},
   {"unknown", "Unknown", StateGroup::Rejected},
 }};
 
@@ -158,6 +164,25 @@ std::string normalize_aruco_reason(const std::string & reason)
 {
   if (reason == "none" || reason.empty()) {
     return "not_received";
+  }
+  if (starts_with(reason, "aruco_position_ok_yaw_")) {
+    return "aruco_position_ok_yaw_rejected";
+  }
+  if (starts_with(reason, "aruco_position_covariance_gate") ||
+    starts_with(reason, "aruco_yaw_covariance_gate"))
+  {
+    return "covariance_gate";
+  }
+  if (starts_with(reason, "aruco_position_gate") ||
+    starts_with(reason, "aruco_position_mahalanobis_gate"))
+  {
+    return "position_gate";
+  }
+  if (starts_with(reason, "aruco_invalid_")) {
+    return "invalid";
+  }
+  if (starts_with(reason, "aruco_outside_history")) {
+    return "outside_history";
   }
   return has_state_key(kArucoStates, reason) ? reason : "unknown";
 }
