@@ -172,7 +172,6 @@ python3 -m pytest test/ -v
 |------|--------|------|
 | `enable_camera` | true | 카메라 드라이버 시작 여부 |
 | `enable_imu` | true | IMU 드라이버 시작 여부 |
-| `enable_vehicle_static_tf` | true | 차량 static TF 시작 여부 |
 | `enable_pose_viz` | true | RViz marker 시각화 |
 | `publish_aruco_tf` | false | detector 단계 board->camera TF 출력 |
 

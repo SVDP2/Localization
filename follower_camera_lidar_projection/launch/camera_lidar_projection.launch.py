@@ -26,7 +26,7 @@ def generate_launch_description():
         DeclareLaunchArgument('projection_params_file', default_value=default_params),
         DeclareLaunchArgument('camera_calibration_file', default_value=default_intrinsic),
         DeclareLaunchArgument('extrinsic_file', default_value=default_extrinsic),
-        DeclareLaunchArgument('publish_static_tf', default_value='true'),
+        DeclareLaunchArgument('publish_static_tf', default_value='false'),
         Node(
             package='tf2_ros',
             executable='static_transform_publisher',

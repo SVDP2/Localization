@@ -8,12 +8,12 @@ leader 상대 pose를 추정하고, 이후 ArUco/IMU/GPS와 어떻게 합칠지 
 
 - `follower_lidar_localization`: follower LiDAR 기반 leader wheel fitting.
   센서 측위 알고리즘 패키지이며, V2V 통신이나 controller bridge를 맡지 않는다.
-- `aruco_imu_eskf_localization_cpp`: ArUco+IMU 상대 pose filter. v1에서는
+- `relative_localization_eskf`: ArUco+IMU 상대 pose filter. v1에서는
   LiDAR wheel fitting을 직접 fusion하지 않는다.
 - `comm/platoon_localization`: 리더/팔로워 공용 TF, V2V 상대상태 bridge,
   실행 편의 launch만 둔다. LiDAR fitting 알고리즘은 넣지 않는다.
 
-기존 `aruco_imu_eskf_localization_cpp` 패키지 이름 정리는 별도 작업으로
+기존 `relative_localization_eskf` 패키지 이름 정리는 별도 작업으로
 분리한다. 이번 단계에서는 새 LiDAR 패키지와 문서만 추가한다.
 
 ## 2. 관측 모델
@@ -117,7 +117,7 @@ v1:
 
 v2:
 
-- `aruco_imu_eskf_localization_cpp`에 optional LiDAR wheel odom input을 추가한다.
+- `relative_localization_eskf`에 optional LiDAR wheel odom input을 추가한다.
 - 기본값은 `enable_lidar_wheel_fusion:=false`.
 - LiDAR는 position+yaw 보조 measurement로만 사용한다.
 - visible segment count, residual, covariance, tracker state로 gate한다.
@@ -157,7 +157,7 @@ ros2 launch follower_lidar_localization leader_wheel_fitting.launch.py \
   use_aruco_prior:=false
 ```
 
-`publish_lidar_static_tf:=true`는 기존 `indoor_relative_localization.launch.py`
+`publish_lidar_static_tf:=true`는 기존 `relative_localization.launch.py`
 또는 다른 static TF launch와 동시에 켜지 않는다. 같은 child frame을 두 번
 publish하면 TF tree가 충돌한다.
 
