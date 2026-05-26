@@ -45,7 +45,7 @@ struct FitConfig
   double cluster_gap_m{0.060};
   int min_cluster_points{4};
   double candidate_min_length_m{0.050};
-  double candidate_max_length_m{0.180};
+  double candidate_max_length_m{0.320};
   double candidate_max_rms_m{0.025};
 
   int min_visible_segments{2};
@@ -53,6 +53,7 @@ struct FitConfig
   double assignment_max_angle_error_rad{0.65};
   double prior_position_weight{0.25};
   double prior_yaw_weight{0.10};
+  bool enable_l_shape_segments{true};
 };
 
 struct TrackerConfig

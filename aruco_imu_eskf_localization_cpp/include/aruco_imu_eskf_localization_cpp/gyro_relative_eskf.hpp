@@ -66,6 +66,12 @@ public:
     int64_t stamp_ns,
     const Eigen::Vector3d & position_m,
     const Eigen::Matrix3d & position_covariance);
+  void initialize_pose(
+    int64_t stamp_ns,
+    const Eigen::Vector3d & position_m,
+    const Eigen::Matrix3d & position_covariance,
+    double yaw_rad,
+    double yaw_variance_rad2);
   void predict(int64_t target_stamp_ns, const Eigen::Vector3d & angular_velocity_base);
   PositionUpdateResult update_position(
     const Eigen::Vector3d & measured_position_m,

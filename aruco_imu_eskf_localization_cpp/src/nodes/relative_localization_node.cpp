@@ -25,6 +25,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace aruco_imu_eskf_localization_cpp
@@ -67,6 +68,33 @@ double yaw_from_rotation(const Eigen::Matrix3d & rotation)
   return std::atan2(rotation(1, 0), rotation(0, 0));
 }
 
+Eigen::Isometry3d odom_pose_matrix(const nav_msgs::msg::Odometry & msg)
+{
+  Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
+  const auto & p = msg.pose.pose.position;
+  const auto & q = msg.pose.pose.orientation;
+  pose.translation() = Eigen::Vector3d(p.x, p.y, p.z);
+  pose.linear() = normalize_quaternion(q.x, q.y, q.z, q.w).toRotationMatrix();
+  return pose;
+}
+
+Eigen::Matrix<double, 6, 6> covariance_from_odom(const nav_msgs::msg::Odometry & msg)
+{
+  Eigen::Matrix<double, 6, 6> cov;
+  for (int r = 0; r < 6; ++r) {
+    for (int c = 0; c < 6; ++c) {
+      cov(r, c) = msg.pose.covariance[r * 6 + c];
+    }
+  }
+  return cov;
+}
+
+double covariance_value(const Eigen::Matrix<double, 6, 6> & cov, int row, int col, double fallback)
+{
+  const double value = cov(row, col);
+  return std::isfinite(value) && value >= 0.0 ? value : fallback;
+}
+
 }  // namespace
 
 struct ImuSample
@@ -95,11 +123,14 @@ public:
     declare_parameter("board_pose_topic", "localization/aruco/board_pose");
     declare_parameter("odom_topic", "localization/relative/odom");
     declare_parameter("pose_topic", "localization/relative/pose");
+    declare_parameter("leader_base_odom_topic", "localization/leader_base/odom");
+    declare_parameter("leader_base_pose_topic", "localization/leader_base/pose");
     declare_parameter("leader_rear_odom_topic", "localization/leader_rear/odom");
     declare_parameter("leader_rear_pose_topic", "localization/leader_rear/pose");
     declare_parameter("diagnostics_topic", "diagnostics");
     declare_parameter("lidar_scan_topic", "/follower/scan");
     declare_parameter("board_frame", "leader/board");
+    declare_parameter("leader_base_frame", "leader/base_link");
     declare_parameter("leader_rear_frame", "leader/leader_rear");
     declare_parameter("base_frame", "follower/base_link");
     declare_parameter("camera_frame", "follower/usb_cam");
@@ -109,6 +140,9 @@ public:
     declare_parameter("vision_delay_buffer_sec", 2.0);
     declare_parameter("aruco_position_gate_m", 1.0);
     declare_parameter("aruco_position_covariance_scale", 0.35);
+    declare_parameter("enable_aruco_yaw_update", true);
+    declare_parameter("aruco_yaw_gate_deg", 25.0);
+    declare_parameter("aruco_yaw_covariance_scale", 1.0);
     declare_parameter("position_smoothing_alpha", 0.55);
     declare_parameter("gyro_noise_std_radps", 0.05);
     declare_parameter("gyro_bias_noise_std_radps", 0.002);
@@ -146,8 +180,22 @@ public:
     declare_parameter("lidar_icp_recovery_yaw_var_scale", 8.0);
     declare_parameter("lidar_icp_recovery_max_yaw_rate_delta_radps", 0.35);
     declare_parameter("camera_tf_startup_grace_sec", 2.0);
+    declare_parameter("leader_base_to_rear_x_m", -0.275);
+    declare_parameter("leader_base_to_rear_y_m", 0.0);
+    declare_parameter("leader_base_to_rear_z_m", 0.0525);
+    declare_parameter("enable_lidar_wheel_pose_update", true);
+    declare_parameter("lidar_wheel_odom_topic", "/follower/localization/lidar_wheels/leader_base_detection");
+    declare_parameter("lidar_wheel_pose_gate_m", 0.30);
+    declare_parameter("lidar_wheel_yaw_gate_deg", 25.0);
+    declare_parameter("enable_gps_pose_update", false);
+    declare_parameter("gps_leader_odom_topic", "/v2v/leader/odom");
+    declare_parameter("gps_follower_odom_topic", "/follower/localization/global/odom");
+    declare_parameter("gps_pose_gate_m", 1.50);
+    declare_parameter("gps_yaw_gate_deg", 30.0);
+    declare_parameter("gps_odom_timeout_sec", 0.50);
 
     board_frame_ = get_parameter("board_frame").as_string();
+    leader_base_frame_ = get_parameter("leader_base_frame").as_string();
     leader_rear_frame_ = get_parameter("leader_rear_frame").as_string();
     base_frame_ = get_parameter("base_frame").as_string();
     camera_frame_ = get_parameter("camera_frame").as_string();
@@ -157,6 +205,11 @@ public:
     aruco_position_gate_m_ = get_parameter("aruco_position_gate_m").as_double();
     aruco_position_covariance_scale_ = std::clamp(
       get_parameter("aruco_position_covariance_scale").as_double(), 0.02, 100.0);
+    enable_aruco_yaw_update_ = get_parameter("enable_aruco_yaw_update").as_bool();
+    aruco_yaw_gate_rad_ =
+      std::max(get_parameter("aruco_yaw_gate_deg").as_double(), 0.0) * M_PI / 180.0;
+    aruco_yaw_covariance_scale_ = std::clamp(
+      get_parameter("aruco_yaw_covariance_scale").as_double(), 0.02, 100.0);
     fixed_gyro_z_bias_radps_ = get_parameter("gyro_z_bias_radps").as_double();
     enable_startup_gyro_bias_calibration_ =
       get_parameter("enable_startup_gyro_bias_calibration").as_bool();
@@ -210,6 +263,18 @@ public:
       std::max(get_parameter("lidar_icp_recovery_max_yaw_rate_delta_radps").as_double(), 0.0);
     camera_tf_startup_grace_sec_ =
       std::max(get_parameter("camera_tf_startup_grace_sec").as_double(), 0.0);
+    leader_base_to_rear_x_m_ = get_parameter("leader_base_to_rear_x_m").as_double();
+    leader_base_to_rear_y_m_ = get_parameter("leader_base_to_rear_y_m").as_double();
+    leader_base_to_rear_z_m_ = get_parameter("leader_base_to_rear_z_m").as_double();
+    enable_lidar_wheel_pose_update_ = get_parameter("enable_lidar_wheel_pose_update").as_bool();
+    lidar_wheel_pose_gate_m_ = std::max(get_parameter("lidar_wheel_pose_gate_m").as_double(), 0.0);
+    lidar_wheel_yaw_gate_rad_ =
+      std::max(get_parameter("lidar_wheel_yaw_gate_deg").as_double(), 0.0) * M_PI / 180.0;
+    enable_gps_pose_update_ = get_parameter("enable_gps_pose_update").as_bool();
+    gps_pose_gate_m_ = std::max(get_parameter("gps_pose_gate_m").as_double(), 0.0);
+    gps_yaw_gate_rad_ =
+      std::max(get_parameter("gps_yaw_gate_deg").as_double(), 0.0) * M_PI / 180.0;
+    gps_odom_timeout_sec_ = std::max(get_parameter("gps_odom_timeout_sec").as_double(), 0.0);
 
     GyroRelativeEskfOptions filter_options;
     filter_options.position_smoothing_alpha = get_parameter("position_smoothing_alpha").as_double();
@@ -244,6 +309,10 @@ public:
       get_parameter("odom_topic").as_string(), 10);
     board_pose_pub_ = create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(
       get_parameter("pose_topic").as_string(), 10);
+    leader_base_odom_pub_ = create_publisher<nav_msgs::msg::Odometry>(
+      get_parameter("leader_base_odom_topic").as_string(), 10);
+    leader_base_pose_pub_ = create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(
+      get_parameter("leader_base_pose_topic").as_string(), 10);
     leader_rear_odom_pub_ = create_publisher<nav_msgs::msg::Odometry>(
       get_parameter("leader_rear_odom_topic").as_string(), 10);
     leader_rear_pose_pub_ = create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(
@@ -279,7 +348,7 @@ public:
 
     RCLCPP_INFO(
       get_logger(),
-      "C++ ArUco+IMU ESKF running with translation-only ArUco updates and LiDAR ICP yaw=%s",
+      "C++ ArUco+IMU ESKF running with ArUco/LiDAR/GPS pose updates and LiDAR ICP yaw=%s",
       enable_lidar_icp_yaw_ ? "enabled" : "disabled");
     RCLCPP_INFO(
       get_logger(),
@@ -366,6 +435,104 @@ private:
         base_frame_.c_str(), frame.c_str(), e.what());
       return std::nullopt;
     }
+  }
+
+
+  Eigen::Isometry3d leader_base_to_rear_fallback() const
+  {
+    Eigen::Isometry3d tf = Eigen::Isometry3d::Identity();
+    tf.translation() = Eigen::Vector3d(
+      leader_base_to_rear_x_m_, leader_base_to_rear_y_m_, leader_base_to_rear_z_m_);
+    return tf;
+  }
+
+  Eigen::Isometry3d leader_base_from_leader_rear()
+  {
+    if (cached_leader_base_from_rear_) {
+      return *cached_leader_base_from_rear_;
+    }
+    try {
+      const auto tf = tf_buffer_.lookupTransform(
+        leader_base_frame_, leader_rear_frame_, tf2::TimePointZero);
+      cached_leader_base_from_rear_ = transform_from_msg(tf);
+    } catch (const std::exception & e) {
+      cached_leader_base_from_rear_ = leader_base_to_rear_fallback().inverse();
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "leader TF %s <- %s unavailable, using configured fallback: %s",
+        leader_base_frame_.c_str(), leader_rear_frame_.c_str(), e.what());
+    }
+    return *cached_leader_base_from_rear_;
+  }
+
+  Eigen::Isometry3d leader_rear_from_leader_base()
+  {
+    return leader_base_from_leader_rear().inverse();
+  }
+
+  std::pair<bool, std::string> apply_pose_measurement(
+    int64_t ns,
+    const Eigen::Isometry3d & leader_from_base,
+    const Eigen::Matrix<double, 6, 6> & covariance,
+    double position_gate_m,
+    double yaw_gate_rad,
+    bool use_yaw,
+    const std::string & source_name)
+  {
+    Eigen::Matrix3d pos_cov = covariance.block<3, 3>(0, 0);
+    pos_cov(0, 0) = std::max(pos_cov(0, 0), filter_options_.min_position_variance);
+    pos_cov(1, 1) = std::max(pos_cov(1, 1), filter_options_.min_position_variance);
+    const double yaw = yaw_from_rotation(leader_from_base.linear());
+    const double yaw_var = std::max(covariance_value(covariance, 5, 5, 0.05), 1.0e-9);
+
+    if (!filter_->initialized()) {
+      if (use_yaw) {
+        filter_->initialize_pose(ns, leader_from_base.translation(), pos_cov, yaw, yaw_var);
+      } else {
+        filter_->initialize_position_only(ns, leader_from_base.translation(), pos_cov);
+      }
+      record_snapshot();
+      prune_history(ns);
+      return {true, source_name + "_initialized"};
+    }
+
+    PositionUpdateResult pos_update;
+    YawUpdateResult yaw_update;
+    const auto replay_target = filter_->stamp_ns();
+    if (replay_target && ns < *replay_target) {
+      const auto current = filter_->snapshot();
+      if (!restore_snapshot_before(ns)) {
+        return {false, source_name + "_outside_history"};
+      }
+      predict_filter_to_stamp(ns);
+      pos_update = filter_->update_position(leader_from_base.translation(), pos_cov, position_gate_m);
+      if (!pos_update.accepted) {
+        filter_->restore(current);
+        return {false, source_name + "_" + pos_update.reason};
+      }
+      if (use_yaw) {
+        yaw_update = filter_->update_yaw(yaw, yaw_var, yaw_gate_rad);
+      }
+      record_snapshot();
+      predict_filter_to_stamp(*replay_target);
+      record_snapshot();
+    } else {
+      predict_filter_to_stamp(ns);
+      pos_update = filter_->update_position(leader_from_base.translation(), pos_cov, position_gate_m);
+      if (!pos_update.accepted) {
+        return {false, source_name + "_" + pos_update.reason};
+      }
+      if (use_yaw) {
+        yaw_update = filter_->update_yaw(yaw, yaw_var, yaw_gate_rad);
+      }
+      record_snapshot();
+    }
+
+    prune_history(std::max(ns, filter_->stamp_ns().value_or(ns)));
+    if (use_yaw && !yaw_update.accepted) {
+      return {true, source_name + "_position_ok_yaw_" + yaw_update.reason};
+    }
+    return {true, source_name + "_pose_update"};
   }
 
   bool point_in_lidar_icp_exclusion_box(const Eigen::Vector3d & point_base) const
@@ -800,78 +967,122 @@ private:
     board_from_camera.translation() = Eigen::Vector3d(p.x, p.y, p.z);
     board_from_camera.linear() = normalize_quaternion(q.x, q.y, q.z, q.w).toRotationMatrix();
     const Eigen::Isometry3d board_from_base = board_from_camera * (*cam_from_base);
-    const Eigen::Isometry3d leader_from_base = transform_leader_rear_from_board() * board_from_base;
-    const Eigen::Matrix<double, 6, 6> leader_cov =
-      transform_pose_covariance(covariance_from_msg(*msg), transform_leader_rear_from_board());
-    Eigen::Matrix3d pos_cov = leader_cov.block<3, 3>(0, 0);
-    pos_cov *= aruco_position_covariance_scale_;
+    const Eigen::Isometry3d leader_rear_from_base =
+      transform_leader_rear_from_board() * board_from_base;
+    const Eigen::Isometry3d leader_from_base =
+      leader_base_from_leader_rear() * leader_rear_from_base;
+    Eigen::Matrix<double, 6, 6> leader_cov = transform_pose_covariance(
+      transform_pose_covariance(covariance_from_msg(*msg), transform_leader_rear_from_board()),
+      leader_base_from_leader_rear());
+    leader_cov.block<3, 3>(0, 0) *= aruco_position_covariance_scale_;
+    leader_cov(5, 5) *= aruco_yaw_covariance_scale_;
 
-    if (
-      !filter_->initialized() || !last_vision_stamp_ns_ ||
-      (ns - *last_vision_stamp_ns_) > static_cast<int64_t>(reset_timeout_sec_ * 1.0e9))
-    {
-      const auto replay_target = filter_->stamp_ns();
-      filter_->initialize_position_only(
-        ns, leader_from_base.translation(), pos_cov);
+    const bool stale = !last_vision_stamp_ns_ ||
+      (ns - *last_vision_stamp_ns_) > static_cast<int64_t>(reset_timeout_sec_ * 1.0e9);
+    if (stale) {
+      filter_->reset();
+      state_history_.clear();
       lidar_icp_initialized_ = false;
       have_lidar_icp_yaw_ref_ = false;
       last_lidar_icp_update_stamp_ns_.reset();
       last_lidar_icp_yaw_rate_radps_.reset();
       reset_lidar_icp_recovery();
-      record_snapshot();
-      if (replay_target && *replay_target > ns) {
-        predict_filter_to_stamp(*replay_target);
-        record_snapshot();
-      }
-      last_vision_stamp_ns_ = ns;
-      diag_.aruco_update_applied = true;
-      diag_.aruco_update_reason = "initialized_translation_only";
-      diag_.aruco_position_innovation_m = 0.0;
-      diag_.aruco_position_gate_m = aruco_position_gate_m_;
-      diag_.aruco_position_covariance_scale = aruco_position_covariance_scale_;
-      diag_.aruco_rotation_innovation_deg = 0.0;
-      prune_history(std::max(ns, replay_target.value_or(ns)));
-      return;
     }
 
-    PositionUpdateResult update;
-    const auto replay_target = filter_->stamp_ns();
-    if (replay_target && ns < *replay_target) {
-      const auto current = filter_->snapshot();
-      if (!restore_snapshot_before(ns)) {
-        diag_.aruco_update_applied = false;
-        diag_.aruco_update_reason = "outside_history";
-        diag_.last_skip_reason = "aruco_outside_history";
-        return;
-      }
-      predict_filter_to_stamp(ns);
-      update = filter_->update_position(leader_from_base.translation(), pos_cov, aruco_position_gate_m_);
-      if (!update.accepted) {
-        filter_->restore(current);
-      } else {
-        record_snapshot();
-        predict_filter_to_stamp(*replay_target);
-        record_snapshot();
-      }
-    } else {
-      predict_filter_to_stamp(ns);
-      update = filter_->update_position(leader_from_base.translation(), pos_cov, aruco_position_gate_m_);
-      if (update.accepted) {
-        record_snapshot();
-      }
-    }
+    diag_.aruco_position_innovation_m = filter_->initialized() ?
+      (leader_from_base.translation().head<2>() -
+      filter_->pose_matrix().translation().head<2>()).norm() : 0.0;
+    const auto outcome = apply_pose_measurement(
+      ns, leader_from_base, leader_cov, aruco_position_gate_m_, aruco_yaw_gate_rad_,
+      enable_aruco_yaw_update_, "aruco");
 
     last_vision_stamp_ns_ = ns;
-    diag_.aruco_update_applied = update.accepted;
-    diag_.aruco_update_reason = update.reason;
-    diag_.aruco_position_innovation_m = update.position_innovation_m;
+    diag_.aruco_update_applied = outcome.first;
+    diag_.aruco_update_reason = outcome.second;
     diag_.aruco_position_gate_m = aruco_position_gate_m_;
     diag_.aruco_position_covariance_scale = aruco_position_covariance_scale_;
     diag_.aruco_rotation_innovation_deg = 0.0;
-    if (!update.accepted) {
-      diag_.last_skip_reason = "aruco_" + update.reason;
+    if (!outcome.first) {
+      diag_.last_skip_reason = outcome.second;
     }
-    prune_history(std::max(ns, filter_->stamp_ns().value_or(ns)));
+  }
+
+  void lidar_wheel_odom_callback(const nav_msgs::msg::Odometry::ConstSharedPtr msg)
+  {
+    const int64_t ns = stamp_ns(msg->header.stamp);
+    const Eigen::Isometry3d follower_from_leader = odom_pose_matrix(*msg);
+    const Eigen::Isometry3d leader_from_base = follower_from_leader.inverse();
+    const Eigen::Matrix<double, 6, 6> leader_cov =
+      transform_pose_covariance(covariance_from_odom(*msg), leader_from_base);
+    const auto outcome = apply_pose_measurement(
+      ns, leader_from_base, leader_cov, lidar_wheel_pose_gate_m_, lidar_wheel_yaw_gate_rad_,
+      true, "lidar_wheel");
+    if (!outcome.first) {
+      diag_.last_skip_reason = outcome.second;
+    }
+  }
+
+  void gps_leader_odom_callback(const nav_msgs::msg::Odometry::ConstSharedPtr msg)
+  {
+    latest_gps_leader_odom_ = msg;
+    try_gps_pose_update();
+  }
+
+  void gps_follower_odom_callback(const nav_msgs::msg::Odometry::ConstSharedPtr msg)
+  {
+    latest_gps_follower_odom_ = msg;
+    try_gps_pose_update();
+  }
+
+  bool gps_odom_fresh(const nav_msgs::msg::Odometry::ConstSharedPtr & msg) const
+  {
+    if (!msg) {
+      return false;
+    }
+    const double age_sec =
+      static_cast<double>(now().nanoseconds() - stamp_ns(msg->header.stamp)) * 1.0e-9;
+    return age_sec >= 0.0 && age_sec <= gps_odom_timeout_sec_;
+  }
+
+  void try_gps_pose_update()
+  {
+    if (!gps_odom_fresh(latest_gps_leader_odom_) || !gps_odom_fresh(latest_gps_follower_odom_)) {
+      return;
+    }
+    if (latest_gps_leader_odom_->header.frame_id != latest_gps_follower_odom_->header.frame_id) {
+      diag_.last_skip_reason = "gps_frame_mismatch";
+      return;
+    }
+
+    const int64_t leader_ns = stamp_ns(latest_gps_leader_odom_->header.stamp);
+    const int64_t follower_ns = stamp_ns(latest_gps_follower_odom_->header.stamp);
+    const int64_t ns = std::min(leader_ns, follower_ns);
+    if (last_gps_update_stamp_ns_ && ns <= *last_gps_update_stamp_ns_) {
+      return;
+    }
+    last_gps_update_stamp_ns_ = ns;
+
+    const Eigen::Isometry3d map_from_leader = odom_pose_matrix(*latest_gps_leader_odom_);
+    const Eigen::Isometry3d map_from_follower = odom_pose_matrix(*latest_gps_follower_odom_);
+    const Eigen::Isometry3d leader_from_base = map_from_leader.inverse() * map_from_follower;
+
+    Eigen::Matrix<double, 6, 6> cov = Eigen::Matrix<double, 6, 6>::Zero();
+    const auto leader_cov = covariance_from_odom(*latest_gps_leader_odom_);
+    const auto follower_cov = covariance_from_odom(*latest_gps_follower_odom_);
+    cov(0, 0) = covariance_value(leader_cov, 0, 0, 0.25) +
+      covariance_value(follower_cov, 0, 0, 0.25);
+    cov(1, 1) = covariance_value(leader_cov, 1, 1, 0.25) +
+      covariance_value(follower_cov, 1, 1, 0.25);
+    cov(2, 2) = covariance_value(leader_cov, 2, 2, 1.0) +
+      covariance_value(follower_cov, 2, 2, 1.0);
+    cov(5, 5) = covariance_value(leader_cov, 5, 5, 0.25) +
+      covariance_value(follower_cov, 5, 5, 0.25);
+
+    const auto outcome = apply_pose_measurement(
+      ns, leader_from_base, cov, gps_pose_gate_m_, gps_yaw_gate_rad_, true, "gps");
+    if (!outcome.first) {
+      diag_.last_skip_reason = outcome.second;
+    }
   }
 
   void predict_filter_to_stamp(int64_t target_ns)
@@ -945,17 +1156,23 @@ private:
       extrapolated.predict(now_ns, last_imu_sample_->angular_velocity_base);
     }
 
-    const Eigen::Isometry3d leader_from_base = extrapolated.pose_matrix();
-    const Eigen::Matrix<double, 6, 6> leader_cov = extrapolated.pose_covariance();
-    const Eigen::Isometry3d board_from_base = transform_board_from_leader_rear() * leader_from_base;
+    const Eigen::Isometry3d leader_base_from_follower = extrapolated.pose_matrix();
+    const Eigen::Matrix<double, 6, 6> leader_base_cov = extrapolated.pose_covariance();
+    const Eigen::Isometry3d leader_rear_from_follower =
+      leader_rear_from_leader_base() * leader_base_from_follower;
+    const Eigen::Matrix<double, 6, 6> leader_rear_cov =
+      transform_pose_covariance(leader_base_cov, leader_rear_from_leader_base());
+    const Eigen::Isometry3d board_from_follower =
+      transform_board_from_leader_rear() * leader_rear_from_follower;
     const Eigen::Matrix<double, 6, 6> board_cov =
-      transform_pose_covariance(leader_cov, transform_board_from_leader_rear());
+      transform_pose_covariance(leader_rear_cov, transform_board_from_leader_rear());
 
     const auto stamp = time_msg_from_ns(now_ns);
     publish_outputs(
-      stamp, board_from_base, board_cov, leader_from_base, leader_cov,
+      stamp, board_from_follower, board_cov, leader_rear_from_follower, leader_rear_cov,
+      leader_base_from_follower, leader_base_cov,
       extrapolated.linear_velocity_base_mps(), extrapolated.angular_velocity_base_radps());
-    diag_.filter_yaw_rad = yaw_from_quaternion(Eigen::Quaterniond(leader_from_base.linear()));
+    diag_.filter_yaw_rad = yaw_from_quaternion(Eigen::Quaterniond(leader_base_from_follower.linear()));
   }
 
   nav_msgs::msg::Odometry make_odom(
@@ -993,8 +1210,10 @@ private:
     const builtin_interfaces::msg::Time & stamp,
     const Eigen::Isometry3d & board_from_base,
     const Eigen::Matrix<double, 6, 6> & board_cov,
-    const Eigen::Isometry3d & leader_from_base,
-    const Eigen::Matrix<double, 6, 6> & leader_cov,
+    const Eigen::Isometry3d & leader_rear_from_base,
+    const Eigen::Matrix<double, 6, 6> & leader_rear_cov,
+    const Eigen::Isometry3d & leader_base_from_base,
+    const Eigen::Matrix<double, 6, 6> & leader_base_cov,
     const Eigen::Vector3d & linear_velocity_base,
     const Eigen::Vector3d & angular_velocity_base)
   {
@@ -1007,8 +1226,17 @@ private:
     board_pose.pose = board_odom.pose;
     board_pose_pub_->publish(board_pose);
 
+    const auto leader_base_odom = make_odom(
+      stamp, leader_base_frame_, base_frame_, leader_base_from_base, leader_base_cov,
+      linear_velocity_base, angular_velocity_base);
+    leader_base_odom_pub_->publish(leader_base_odom);
+    geometry_msgs::msg::PoseWithCovarianceStamped leader_base_pose;
+    leader_base_pose.header = leader_base_odom.header;
+    leader_base_pose.pose = leader_base_odom.pose;
+    leader_base_pose_pub_->publish(leader_base_pose);
+
     const auto leader_odom = make_odom(
-      stamp, leader_rear_frame_, base_frame_, leader_from_base, leader_cov,
+      stamp, leader_rear_frame_, base_frame_, leader_rear_from_base, leader_rear_cov,
       linear_velocity_base, angular_velocity_base);
     leader_rear_odom_pub_->publish(leader_odom);
     geometry_msgs::msg::PoseWithCovarianceStamped leader_pose;
@@ -1018,12 +1246,12 @@ private:
 
     if (tf_broadcaster_) {
       geometry_msgs::msg::TransformStamped tf_msg;
-      tf_msg.header = leader_odom.header;
+      tf_msg.header = leader_base_odom.header;
       tf_msg.child_frame_id = base_frame_;
-      tf_msg.transform.translation.x = leader_from_base.translation().x();
-      tf_msg.transform.translation.y = leader_from_base.translation().y();
-      tf_msg.transform.translation.z = leader_from_base.translation().z();
-      tf_msg.transform.rotation = leader_odom.pose.pose.orientation;
+      tf_msg.transform.translation.x = leader_base_from_base.translation().x();
+      tf_msg.transform.translation.y = leader_base_from_base.translation().y();
+      tf_msg.transform.translation.z = leader_base_from_base.translation().z();
+      tf_msg.transform.rotation = leader_base_odom.pose.pose.orientation;
       tf_broadcaster_->sendTransform(tf_msg);
     }
   }
@@ -1066,15 +1294,29 @@ private:
 
   int64_t node_start_ns_{0};
   std::string board_frame_;
+  std::string leader_base_frame_;
   std::string leader_rear_frame_;
   std::string base_frame_;
   std::string camera_frame_;
   bool publish_tf_{true};
   double camera_tf_startup_grace_sec_{2.0};
+  double leader_base_to_rear_x_m_{-0.275};
+  double leader_base_to_rear_y_m_{0.0};
+  double leader_base_to_rear_z_m_{0.0525};
+  bool enable_lidar_wheel_pose_update_{true};
+  double lidar_wheel_pose_gate_m_{0.30};
+  double lidar_wheel_yaw_gate_rad_{25.0 * M_PI / 180.0};
+  bool enable_gps_pose_update_{false};
+  double gps_pose_gate_m_{1.50};
+  double gps_yaw_gate_rad_{30.0 * M_PI / 180.0};
+  double gps_odom_timeout_sec_{0.50};
   double reset_timeout_sec_{1.0};
   double vision_delay_buffer_sec_{2.0};
   double aruco_position_gate_m_{1.0};
   double aruco_position_covariance_scale_{0.35};
+  bool enable_aruco_yaw_update_{true};
+  double aruco_yaw_gate_rad_{25.0 * M_PI / 180.0};
+  double aruco_yaw_covariance_scale_{1.0};
   double fixed_gyro_z_bias_radps_{0.0};
   bool enable_startup_gyro_bias_calibration_{true};
   double startup_calibration_duration_sec_{2.0};
@@ -1116,8 +1358,13 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr board_pose_sub_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr lidar_scan_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr lidar_wheel_odom_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr gps_leader_odom_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr gps_follower_odom_sub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr board_odom_pub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr board_pose_pub_;
+  rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr leader_base_odom_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr leader_base_pose_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr leader_rear_odom_pub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr leader_rear_pose_pub_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_pub_;
@@ -1139,9 +1386,13 @@ private:
   std::optional<double> last_lidar_icp_yaw_rate_radps_;
   std::optional<Eigen::Isometry3d> cached_camera_from_base_;
   std::optional<Eigen::Isometry3d> cached_base_from_lidar_;
+  std::optional<Eigen::Isometry3d> cached_leader_base_from_rear_;
   std::string cached_lidar_frame_;
   std::string cached_imu_frame_;
   std::optional<Eigen::Matrix3d> cached_rotation_base_from_imu_;
+  nav_msgs::msg::Odometry::ConstSharedPtr latest_gps_leader_odom_;
+  nav_msgs::msg::Odometry::ConstSharedPtr latest_gps_follower_odom_;
+  std::optional<int64_t> last_gps_update_stamp_ns_;
 };
 
 }  // namespace aruco_imu_eskf_localization_cpp

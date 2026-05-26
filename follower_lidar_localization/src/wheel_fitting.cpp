@@ -258,12 +258,30 @@ std::vector<ModelSegment> make_leader_wheel_model(const FitConfig & config)
   const double rear_edge_x = -config.wheel_radius_m;
   const double front_edge_x = config.wheelbase_m - config.wheel_radius_m;
   const Point2 lateral_direction{0.0, 1.0};
-  return {
+  const Point2 longitudinal_direction{1.0, 0.0};
+  std::vector<ModelSegment> model{
     {"rear_left", {rear_edge_x, half_track}, lateral_direction, config.wheel_width_m},
     {"rear_right", {rear_edge_x, -half_track}, lateral_direction, config.wheel_width_m},
     {"front_left", {front_edge_x, half_track}, lateral_direction, config.wheel_width_m},
     {"front_right", {front_edge_x, -half_track}, lateral_direction, config.wheel_width_m},
   };
+  if (config.enable_l_shape_segments) {
+    const double left_inner_y = half_track - 0.5 * config.wheel_width_m;
+    const double right_inner_y = -half_track + 0.5 * config.wheel_width_m;
+    model.push_back(
+      {"rear_left_inner", {0.0, left_inner_y}, longitudinal_direction,
+        2.0 * config.wheel_radius_m});
+    model.push_back(
+      {"rear_right_inner", {0.0, right_inner_y}, longitudinal_direction,
+        2.0 * config.wheel_radius_m});
+    model.push_back(
+      {"front_left_inner", {config.wheelbase_m, left_inner_y}, longitudinal_direction,
+        2.0 * config.wheel_radius_m});
+    model.push_back(
+      {"front_right_inner", {config.wheelbase_m, right_inner_y}, longitudinal_direction,
+        2.0 * config.wheel_radius_m});
+  }
+  return model;
 }
 
 std::vector<SegmentCandidate> extract_segment_candidates(

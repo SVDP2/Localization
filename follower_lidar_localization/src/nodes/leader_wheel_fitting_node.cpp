@@ -184,7 +184,7 @@ private:
     declare_parameter("cluster_gap_m", 0.060);
     declare_parameter("min_cluster_points", 4);
     declare_parameter("candidate_min_length_m", 0.050);
-    declare_parameter("candidate_max_length_m", 0.180);
+    declare_parameter("candidate_max_length_m", 0.320);
     declare_parameter("candidate_max_rms_m", 0.025);
     declare_parameter("min_visible_segments", 2);
     declare_parameter("assignment_max_center_distance_m", 0.180);

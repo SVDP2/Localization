@@ -69,6 +69,23 @@ TEST(WheelFitting, FitsFourVisibleWheelSegments)
   EXPECT_NEAR(angle_distance(result.pose.yaw, expected.yaw), 0.0, 0.04);
 }
 
+
+TEST(WheelFitting, LShapeInnerFaceHelpsConstrainWheelPose)
+{
+  FitConfig config;
+  config.candidate_max_length_m = 0.32;
+  const Pose2 expected{1.10, -0.05, 0.10};
+  const auto points = sample_model_segments(config, expected, {0, 4});
+
+  const auto result = fit_leader_wheel_pose(points, config, expected);
+
+  ASSERT_TRUE(result.valid) << result.status;
+  EXPECT_GE(result.visible_segments, 2);
+  EXPECT_NEAR(result.pose.x, expected.x, 0.04);
+  EXPECT_NEAR(result.pose.y, expected.y, 0.04);
+  EXPECT_NEAR(angle_distance(result.pose.yaw, expected.yaw), 0.0, 0.05);
+}
+
 TEST(WheelFitting, PriorDisambiguatesTwoRearSegments)
 {
   FitConfig config;

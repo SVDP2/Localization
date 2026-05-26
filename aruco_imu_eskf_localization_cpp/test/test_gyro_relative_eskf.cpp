@@ -7,6 +7,50 @@ using aruco_imu_eskf_localization_cpp::GyroRelativeEskf;
 using aruco_imu_eskf_localization_cpp::GyroRelativeEskfOptions;
 using aruco_imu_eskf_localization_cpp::yaw_from_quaternion;
 
+
+TEST(GyroRelativeEskf, InitializePoseSetsMeasuredYaw)
+{
+  GyroRelativeEskf filter;
+  filter.initialize_pose(
+    0, Eigen::Vector3d(0.5, -0.2, 0.0),
+    0.1 * Eigen::Matrix3d::Identity(), 0.7, 0.01);
+
+  const double yaw = yaw_from_quaternion(Eigen::Quaterniond(filter.pose_matrix().linear()));
+
+  EXPECT_TRUE(filter.initialized());
+  EXPECT_NEAR(filter.pose_matrix().translation().x(), 0.5, 1.0e-12);
+  EXPECT_NEAR(filter.pose_matrix().translation().y(), -0.2, 1.0e-12);
+  EXPECT_NEAR(yaw, 0.7, 1.0e-12);
+}
+
+TEST(GyroRelativeEskf, PositionUpdateUsesMeasurementCovariance)
+{
+  GyroRelativeEskf filter;
+  filter.initialize_position_only(
+    0, Eigen::Vector3d::Zero(), 0.01 * Eigen::Matrix3d::Identity());
+
+  const auto weak = filter.update_position(
+    Eigen::Vector3d(1.0, 0.0, 0.0),
+    1.0 * Eigen::Matrix3d::Identity(),
+    2.0);
+  const double weak_x = filter.pose_matrix().translation().x();
+
+  filter.reset();
+  filter.initialize_position_only(
+    0, Eigen::Vector3d::Zero(), 0.01 * Eigen::Matrix3d::Identity());
+  const auto strong = filter.update_position(
+    Eigen::Vector3d(1.0, 0.0, 0.0),
+    0.001 * Eigen::Matrix3d::Identity(),
+    2.0);
+  const double strong_x = filter.pose_matrix().translation().x();
+
+  EXPECT_TRUE(weak.accepted);
+  EXPECT_TRUE(strong.accepted);
+  EXPECT_EQ(strong.reason, "position_update");
+  EXPECT_LT(weak_x, strong_x);
+  EXPECT_GT(strong_x, 0.8);
+}
+
 TEST(GyroRelativeEskf, PredictIntegratesGyroYaw)
 {
   GyroRelativeEskf filter;

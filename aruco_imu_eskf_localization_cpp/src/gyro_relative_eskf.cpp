@@ -86,14 +86,27 @@ void GyroRelativeEskf::initialize_position_only(
   const Eigen::Vector3d & position_m,
   const Eigen::Matrix3d & position_covariance)
 {
+  initialize_pose(stamp_ns, position_m, position_covariance, 0.0, 0.0);
+}
+
+void GyroRelativeEskf::initialize_pose(
+  int64_t stamp_ns,
+  const Eigen::Vector3d & position_m,
+  const Eigen::Matrix3d & position_covariance,
+  double yaw_rad,
+  double yaw_variance_rad2)
+{
   stamp_ns_ = stamp_ns;
   position_m_ = position_m;
   position_m_.z() = 0.0;
-  rotation_ = Eigen::Quaterniond::Identity();
+  rotation_ = Eigen::Quaterniond(Eigen::AngleAxisd(wrap_to_pi(yaw_rad), Eigen::Vector3d::UnitZ()));
   covariance_ = initial_covariance();
   residual_gyro_z_bias_radps_ = 0.0;
   covariance_(0, 0) = std::max(position_covariance(0, 0), options_.min_position_variance);
   covariance_(1, 1) = std::max(position_covariance(1, 1), options_.min_position_variance);
+  if (std::isfinite(yaw_variance_rad2) && yaw_variance_rad2 > 0.0) {
+    covariance_(2, 2) = std::max(yaw_variance_rad2, 1.0e-9);
+  }
   initialized_ = true;
 }
 
@@ -148,16 +161,46 @@ PositionUpdateResult GyroRelativeEskf::update_position(
     return result;
   }
 
-  const double alpha = std::clamp(options_.position_smoothing_alpha, 0.0, 1.0);
-  position_m_.head<2>() += alpha * residual;
-  position_m_.z() = 0.0;
+  Eigen::Matrix<double, 2, 4> h = Eigen::Matrix<double, 2, 4>::Zero();
+  h(0, 0) = 1.0;
+  h(1, 1) = 1.0;
 
-  covariance_(0, 0) = std::max(position_covariance(0, 0), options_.min_position_variance);
-  covariance_(1, 1) = std::max(position_covariance(1, 1), options_.min_position_variance);
+  Eigen::Matrix2d r = position_covariance.block<2, 2>(0, 0);
+  r(0, 0) = std::max(r(0, 0), options_.min_position_variance);
+  r(1, 1) = std::max(r(1, 1), options_.min_position_variance);
+  if (!std::isfinite(r(0, 1))) {
+    r(0, 1) = 0.0;
+  }
+  if (!std::isfinite(r(1, 0))) {
+    r(1, 0) = 0.0;
+  }
+
+  const Eigen::Matrix2d s = h * covariance_ * h.transpose() + r;
+  if (!s.allFinite() || std::abs(s.determinant()) < 1.0e-18) {
+    result.reason = "invalid_covariance";
+    return result;
+  }
+
+  const Eigen::Matrix<double, 4, 2> k = covariance_ * h.transpose() * s.inverse();
+  const Eigen::Matrix<double, 4, 1> dx = k * residual;
+  position_m_.x() += dx(0);
+  position_m_.y() += dx(1);
+  position_m_.z() = 0.0;
+  const double yaw = wrap_to_pi(yaw_from_quaternion(rotation_) + dx(2));
+  rotation_ = Eigen::Quaterniond(Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()));
+  residual_gyro_z_bias_radps_ = clamped_residual_bias(residual_gyro_z_bias_radps_ + dx(3));
+
+  const Eigen::Matrix4d i_kh = Eigen::Matrix4d::Identity() - k * h;
+  covariance_ = i_kh * covariance_ * i_kh.transpose() + k * r * k.transpose();
+  covariance_ = 0.5 * (covariance_ + covariance_.transpose());
+  covariance_(0, 0) = std::max(covariance_(0, 0), options_.min_position_variance);
+  covariance_(1, 1) = std::max(covariance_(1, 1), options_.min_position_variance);
+  covariance_(2, 2) = std::max(covariance_(2, 2), 1.0e-9);
+  covariance_(3, 3) = std::max(covariance_(3, 3), 1.0e-12);
 
   result.accepted = true;
   result.initialized = true;
-  result.reason = "aruco_position_smoothing";
+  result.reason = "position_update";
   return result;
 }
 
