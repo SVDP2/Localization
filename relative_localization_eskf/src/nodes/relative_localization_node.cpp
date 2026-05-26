@@ -146,6 +146,8 @@ public:
     declare_parameter("aruco_min_yaw_variance_rad2", 0.0100);
     declare_parameter("aruco_max_position_variance_m2", 2.0);
     declare_parameter("aruco_max_yaw_variance_rad2", 0.50);
+    declare_parameter("aruco_reinitialize_position_error_m", 0.30);
+    declare_parameter("aruco_reinitialize_min_consecutive", 3);
     declare_parameter("position_smoothing_alpha", 0.55);
     declare_parameter("filter_min_position_variance_m2", 0.0025);
     declare_parameter("gyro_noise_std_radps", 0.05);
@@ -240,6 +242,10 @@ public:
       std::max(get_parameter("aruco_max_position_variance_m2").as_double(), 0.0);
     aruco_max_yaw_variance_rad2_ =
       std::max(get_parameter("aruco_max_yaw_variance_rad2").as_double(), 0.0);
+    aruco_reinitialize_position_error_m_ =
+      std::max(get_parameter("aruco_reinitialize_position_error_m").as_double(), 0.0);
+    aruco_reinitialize_min_consecutive_ = static_cast<int>(
+      std::max<int64_t>(get_parameter("aruco_reinitialize_min_consecutive").as_int(), 1));
     fixed_gyro_z_bias_radps_ = get_parameter("gyro_z_bias_radps").as_double();
     enable_startup_gyro_bias_calibration_ =
       get_parameter("enable_startup_gyro_bias_calibration").as_bool();
@@ -1064,6 +1070,18 @@ private:
     prune_history(std::max(ns, filter_->stamp_ns().value_or(ns)));
   }
 
+  void reset_filter_track()
+  {
+    filter_->reset();
+    state_history_.clear();
+    lidar_icp_initialized_ = false;
+    have_lidar_icp_yaw_ref_ = false;
+    last_lidar_icp_update_stamp_ns_.reset();
+    last_lidar_icp_yaw_rate_radps_.reset();
+    aruco_large_innovation_count_ = 0;
+    reset_lidar_icp_recovery();
+  }
+
   void board_pose_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr msg)
   {
     const auto cam_from_base = camera_from_base();
@@ -1094,18 +1112,24 @@ private:
     const bool stale = !last_vision_stamp_ns_ ||
       (ns - *last_vision_stamp_ns_) > static_cast<int64_t>(reset_timeout_sec_ * 1.0e9);
     if (stale && !enable_gps_pose_update_) {
-      filter_->reset();
-      state_history_.clear();
-      lidar_icp_initialized_ = false;
-      have_lidar_icp_yaw_ref_ = false;
-      last_lidar_icp_update_stamp_ns_.reset();
-      last_lidar_icp_yaw_rate_radps_.reset();
-      reset_lidar_icp_recovery();
+      reset_filter_track();
     }
 
     diag_.aruco_position_innovation_m = filter_->initialized() ?
       (leader_from_base.translation().head<2>() -
       filter_->pose_matrix().translation().head<2>()).norm() : 0.0;
+    if (filter_->initialized() && aruco_reinitialize_position_error_m_ > 0.0 &&
+      diag_.aruco_position_innovation_m > aruco_reinitialize_position_error_m_)
+    {
+      ++aruco_large_innovation_count_;
+      if (aruco_large_innovation_count_ >= aruco_reinitialize_min_consecutive_) {
+        reset_filter_track();
+        diag_.last_skip_reason = "aruco_reinitialized_large_innovation";
+      }
+    } else {
+      aruco_large_innovation_count_ = 0;
+    }
+
     const auto outcome = apply_pose_measurement(
       ns, leader_from_base, leader_cov, aruco_position_gate_m_,
       aruco_position_mahalanobis_gate_, aruco_yaw_gate_rad_, enable_aruco_yaw_update_, true,
@@ -1119,7 +1143,9 @@ private:
     diag_.aruco_position_gate_m = aruco_position_gate_m_;
     diag_.aruco_position_covariance_scale = aruco_position_covariance_scale_;
     diag_.aruco_rotation_innovation_deg = 0.0;
-    if (!outcome.first) {
+    if (outcome.first) {
+      aruco_large_innovation_count_ = 0;
+    } else {
       diag_.last_skip_reason = outcome.second;
     }
   }
@@ -1447,6 +1473,9 @@ private:
   double aruco_min_yaw_variance_rad2_{0.0100};
   double aruco_max_position_variance_m2_{2.0};
   double aruco_max_yaw_variance_rad2_{0.50};
+  double aruco_reinitialize_position_error_m_{0.30};
+  int aruco_reinitialize_min_consecutive_{3};
+  int aruco_large_innovation_count_{0};
   bool enable_aruco_yaw_update_{true};
   double aruco_yaw_gate_rad_{20.0 * M_PI / 180.0};
   double aruco_yaw_covariance_scale_{2.0};

@@ -60,6 +60,8 @@ relative_localization_node:
     aruco_min_yaw_variance_rad2: 0.0100
     aruco_max_position_variance_m2: 2.0
     aruco_max_yaw_variance_rad2: 0.50
+    aruco_reinitialize_position_error_m: 0.30
+    aruco_reinitialize_min_consecutive: 3
     position_smoothing_alpha: 0.55
     filter_min_position_variance_m2: 0.0025
     gyro_noise_std_radps: 0.05
@@ -108,11 +110,11 @@ relative_localization_node:
     enable_lidar_wheel_yaw_update: false
     allow_lidar_wheel_initialization: false
     lidar_wheel_position_mahalanobis_gate: 2.0
-    lidar_wheel_position_covariance_scale: 6.0
+    lidar_wheel_position_covariance_scale: 2.0
     lidar_wheel_yaw_covariance_scale: 10.0
-    lidar_wheel_min_position_variance_m2: 0.0100
+    lidar_wheel_min_position_variance_m2: 0.0025
     lidar_wheel_min_yaw_variance_rad2: 0.0300
-    lidar_wheel_max_position_variance_m2: 0.0200
+    lidar_wheel_max_position_variance_m2: 0.0125
     lidar_wheel_max_yaw_variance_rad2: 0.0600
     enable_gps_pose_update: true
     gps_leader_odom_topic: /v2v/leader/odom
