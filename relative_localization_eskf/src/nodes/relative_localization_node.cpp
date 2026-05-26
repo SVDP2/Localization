@@ -533,7 +533,7 @@ private:
         leader_base_frame_, leader_rear_frame_, tf2::TimePointZero);
       cached_leader_base_from_rear_ = transform_from_msg(tf);
     } catch (const std::exception & e) {
-      cached_leader_base_from_rear_ = leader_base_to_rear_fallback().inverse();
+      cached_leader_base_from_rear_ = leader_base_to_rear_fallback();
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 2000,
         "leader TF %s <- %s unavailable, using configured fallback: %s",
