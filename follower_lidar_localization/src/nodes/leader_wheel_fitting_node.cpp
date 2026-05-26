@@ -170,10 +170,10 @@ private:
     declare_parameter("diagnostics_topic", "/follower/localization/lidar_wheels/diagnostics");
     declare_parameter("tf_timeout_sec", 0.05);
 
-    declare_parameter("wheelbase_m", 0.720);
-    declare_parameter("track_width_m", 0.700);
-    declare_parameter("wheel_radius_m", 0.1325);
-    declare_parameter("wheel_width_m", 0.110);
+    declare_parameter("wheelbase_m", 0.722);
+    declare_parameter("track_width_m", 0.660);
+    declare_parameter("wheel_radius_m", 0.115);
+    declare_parameter("wheel_width_m", 0.100);
     declare_parameter("roi_x_min_m", 0.15);
     declare_parameter("roi_x_max_m", 2.50);
     declare_parameter("roi_abs_y_max_m", 1.20);

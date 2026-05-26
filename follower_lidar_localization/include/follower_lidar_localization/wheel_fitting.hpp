@@ -29,10 +29,10 @@ struct ScanPoint2
 
 struct FitConfig
 {
-  double wheelbase_m{0.720};
-  double track_width_m{0.700};
-  double wheel_radius_m{0.1325};
-  double wheel_width_m{0.110};
+  double wheelbase_m{0.722};
+  double track_width_m{0.660};
+  double wheel_radius_m{0.115};
+  double wheel_width_m{0.100};
 
   double roi_x_min_m{0.15};
   double roi_x_max_m{2.50};
