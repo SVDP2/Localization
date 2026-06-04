@@ -1191,12 +1191,35 @@ private:
     return age_sec >= 0.0 && age_sec <= gps_odom_timeout_sec_;
   }
 
+  bool gps_yaw_usable(double yaw_variance_rad2) const
+  {
+    return std::isfinite(yaw_variance_rad2) &&
+           yaw_variance_rad2 >= 0.0 &&
+           (gps_max_yaw_variance_rad2_ <= 0.0 ||
+           yaw_variance_rad2 <= gps_max_yaw_variance_rad2_);
+  }
+
   void try_gps_pose_update()
   {
-    if (!gps_odom_fresh(latest_gps_leader_odom_) || !gps_odom_fresh(latest_gps_follower_odom_)) {
+    const bool leader_fresh = gps_odom_fresh(latest_gps_leader_odom_);
+    const bool follower_fresh = gps_odom_fresh(latest_gps_follower_odom_);
+    diag_.gps_leader_fresh = leader_fresh;
+    diag_.gps_follower_fresh = follower_fresh;
+    diag_.gps_update_applied = false;
+    if (!leader_fresh || !follower_fresh) {
+      diag_.gps_yaw_used = false;
+      if (!leader_fresh && !follower_fresh) {
+        diag_.gps_update_reason = "gps_odom_stale_both";
+      } else {
+        diag_.gps_update_reason = leader_fresh ?
+          "gps_follower_odom_stale" : "gps_leader_odom_stale";
+      }
+      diag_.last_skip_reason = diag_.gps_update_reason;
       return;
     }
     if (latest_gps_leader_odom_->header.frame_id != latest_gps_follower_odom_->header.frame_id) {
+      diag_.gps_yaw_used = false;
+      diag_.gps_update_reason = "gps_frame_mismatch";
       diag_.last_skip_reason = "gps_frame_mismatch";
       return;
     }
@@ -1205,6 +1228,7 @@ private:
     const int64_t follower_ns = stamp_ns(latest_gps_follower_odom_->header.stamp);
     const int64_t ns = std::min(leader_ns, follower_ns);
     if (last_gps_update_stamp_ns_ && ns <= *last_gps_update_stamp_ns_) {
+      diag_.gps_update_reason = "gps_duplicate_or_old_stamp";
       return;
     }
     last_gps_update_stamp_ns_ = ns;
@@ -1224,12 +1248,17 @@ private:
       covariance_value(follower_cov, 2, 2, 1.0);
     cov(5, 5) = covariance_value(leader_cov, 5, 5, 0.25) +
       covariance_value(follower_cov, 5, 5, 0.25);
+    const bool use_gps_yaw = gps_yaw_usable(cov(5, 5));
+    diag_.gps_yaw_used = use_gps_yaw;
+    diag_.gps_yaw_variance_rad2 = cov(5, 5);
 
     const auto outcome = apply_pose_measurement(
       ns, leader_from_base, cov, gps_pose_gate_m_, gps_position_mahalanobis_gate_,
-      gps_yaw_gate_rad_, true, true, gps_position_covariance_scale_, gps_yaw_covariance_scale_,
+      gps_yaw_gate_rad_, use_gps_yaw, true, gps_position_covariance_scale_, gps_yaw_covariance_scale_,
       gps_min_position_variance_m2_, gps_min_yaw_variance_rad2_,
       gps_max_position_variance_m2_, gps_max_yaw_variance_rad2_, "gps");
+    diag_.gps_update_applied = outcome.first;
+    diag_.gps_update_reason = outcome.second;
     if (!outcome.first) {
       diag_.last_skip_reason = outcome.second;
     }
@@ -1289,7 +1318,10 @@ private:
     while (!imu_intervals_.empty() && imu_intervals_.front().end_ns < keep_after) {
       imu_intervals_.pop_front();
     }
-    while (!state_history_.empty() && state_history_.front().stamp_ns && *state_history_.front().stamp_ns < keep_after) {
+    while (
+      !state_history_.empty() && state_history_.front().stamp_ns &&
+      *state_history_.front().stamp_ns < keep_after)
+    {
       state_history_.pop_front();
     }
   }

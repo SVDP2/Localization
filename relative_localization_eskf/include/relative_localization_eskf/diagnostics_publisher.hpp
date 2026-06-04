@@ -46,6 +46,12 @@ struct ArucoImuEskfDiagnostics
   bool lidar_icp_recovery_active{false};
   int lidar_icp_recovery_yaw_gate_rejects{0};
   int lidar_icp_recovery_stable_samples{0};
+  bool gps_leader_fresh{false};
+  bool gps_follower_fresh{false};
+  bool gps_update_applied{false};
+  bool gps_yaw_used{false};
+  double gps_yaw_variance_rad2{0.0};
+  std::string gps_update_reason{"not_received"};
   std::string last_skip_reason{"none"};
 };
 
