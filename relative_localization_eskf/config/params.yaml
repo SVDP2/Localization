@@ -107,8 +107,8 @@ relative_localization_node:
     lidar_wheel_odom_topic: /follower/localization/lidar_wheels/leader_base_detection
     lidar_wheel_pose_gate_m: 0.12
     lidar_wheel_yaw_gate_deg: 8.0
-    enable_lidar_wheel_yaw_update: false
-    allow_lidar_wheel_initialization: false
+    enable_lidar_wheel_yaw_update: true
+    allow_lidar_wheel_initialization: true
     lidar_wheel_position_mahalanobis_gate: 2.0
     lidar_wheel_position_covariance_scale: 2.0
     lidar_wheel_yaw_covariance_scale: 10.0

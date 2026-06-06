@@ -70,6 +70,9 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        SetEnvironmentVariable(name='ROS_DOMAIN_ID', value='42'),
+        SetEnvironmentVariable(
+            name='ROS_DOMAIN_ID',
+            value=os.environ.get('ROS_DOMAIN_ID', '20'),
+        ),
         container,
     ])

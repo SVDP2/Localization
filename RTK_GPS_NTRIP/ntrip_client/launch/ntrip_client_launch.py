@@ -22,7 +22,7 @@ def generate_launch_description():
           DeclareLaunchArgument('ca_cert',               default_value='None'),
           DeclareLaunchArgument('debug',                 default_value='true'),
           DeclareLaunchArgument('rtcm_message_package',  default_value='rtcm_msgs'),
-          DeclareLaunchArgument('ros_domain_id',         default_value='42'),
+          DeclareLaunchArgument('ros_domain_id',         default_value='20'),
           DeclareLaunchArgument('ntrip_namespace',       default_value='follower/ntrip_client'),
 
           # Pass an environment variable to the node

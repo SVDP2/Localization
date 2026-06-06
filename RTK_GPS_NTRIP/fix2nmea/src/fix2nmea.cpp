@@ -20,8 +20,8 @@ class Transformer : public rclcpp::Node
   : Node("fix2nmea")
   {
    
-	//Publishes nmea sentences to topic /ntrip_client/nmea
-	nmea_pub_ = this->create_publisher<nmea_msgs::msg::Sentence>("ntrip_client/nmea", 10);  
+	//Publishes follower NMEA sentences for the namespaced NTRIP client.
+	nmea_pub_ = this->create_publisher<nmea_msgs::msg::Sentence>("/follower/ntrip_client/nmea", 10);  
 	
       	
       	//Subscribes to obtain NavSatFix messages from topic /ublox_gps_node/fix

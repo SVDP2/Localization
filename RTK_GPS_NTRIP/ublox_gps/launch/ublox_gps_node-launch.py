@@ -52,11 +52,14 @@ def generate_launch_description():
                                              remappings=[
                                                  ('ntrip_client/rtcm',
                                                   '/follower/ntrip_client/rtcm'),
+                                                 ('/ntrip_client/nmea',
+                                                  '/follower/ntrip_client/nmea'),
                                              ])
 
     return launch.LaunchDescription([
                                      launch.actions.SetEnvironmentVariable(
-                                         name='ROS_DOMAIN_ID', value='42'),
+                                         name='ROS_DOMAIN_ID',
+                                         value=os.environ.get('ROS_DOMAIN_ID', '20')),
 
                                      ublox_gps_node,
 
