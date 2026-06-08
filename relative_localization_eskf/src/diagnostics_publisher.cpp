@@ -97,11 +97,25 @@ diagnostic_msgs::msg::DiagnosticArray DiagnosticsPublisher::build(
   add_key_value(
     status, "lidar_icp_recovery_stable_samples",
     std::to_string(input.lidar_icp_recovery_stable_samples));
+  add_key_value(
+    status, "lidar_wheel_update_applied",
+    input.lidar_wheel_update_applied ? "true" : "false");
+  add_key_value(status, "lidar_wheel_yaw_used", input.lidar_wheel_yaw_used ? "true" : "false");
+  add_key_value(
+    status, "lidar_wheel_position_variance_m2",
+    std::to_string(input.lidar_wheel_position_variance_m2));
+  add_key_value(
+    status, "lidar_wheel_yaw_variance_rad2",
+    std::to_string(input.lidar_wheel_yaw_variance_rad2));
+  add_key_value(status, "lidar_wheel_update_reason", input.lidar_wheel_update_reason);
   add_key_value(status, "gps_leader_fresh", input.gps_leader_fresh ? "true" : "false");
   add_key_value(status, "gps_follower_fresh", input.gps_follower_fresh ? "true" : "false");
   add_key_value(status, "gps_update_applied", input.gps_update_applied ? "true" : "false");
   add_key_value(status, "gps_yaw_used", input.gps_yaw_used ? "true" : "false");
   add_key_value(status, "gps_yaw_variance_rad2", std::to_string(input.gps_yaw_variance_rad2));
+  add_key_value(
+    status, "gps_duplicate_or_old_stamp",
+    input.gps_duplicate_or_old_stamp ? "true" : "false");
   add_key_value(status, "gps_update_reason", input.gps_update_reason);
   add_key_value(status, "last_skip_reason", input.last_skip_reason);
 

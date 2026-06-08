@@ -16,6 +16,7 @@ def generate_launch_description() -> LaunchDescription:
     publish_lidar_static_tf = LaunchConfiguration('publish_lidar_static_tf')
     scan_topic = LaunchConfiguration('scan_topic')
     base_frame = LaunchConfiguration('base_frame')
+    leader_base_detection_frame = LaunchConfiguration('leader_base_detection_frame')
     use_aruco_prior = LaunchConfiguration('use_aruco_prior')
     aruco_prior_topic = LaunchConfiguration('aruco_prior_topic')
     leader_base_odom_topic = LaunchConfiguration('leader_base_odom_topic')
@@ -68,6 +69,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('publish_lidar_static_tf', default_value='false'),
         DeclareLaunchArgument('scan_topic', default_value='/follower/scan'),
         DeclareLaunchArgument('base_frame', default_value='follower/base_link'),
+        DeclareLaunchArgument('leader_base_detection_frame', default_value='leader/base_link'),
         DeclareLaunchArgument('use_aruco_prior', default_value='true'),
         DeclareLaunchArgument(
             'aruco_prior_topic',
@@ -169,6 +171,7 @@ def generate_launch_description() -> LaunchDescription:
                 {
                     'scan_topic': scan_topic,
                     'base_frame': base_frame,
+                    'leader_base_detection_frame': leader_base_detection_frame,
                     'use_aruco_prior': ParameterValue(
                         use_aruco_prior,
                         value_type=bool,

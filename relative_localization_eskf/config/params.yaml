@@ -105,29 +105,29 @@ relative_localization_node:
     leader_base_to_rear_z_m: 0.0525
     enable_lidar_wheel_pose_update: true
     lidar_wheel_odom_topic: /follower/localization/lidar_wheels/leader_base_detection
-    lidar_wheel_pose_gate_m: 0.12
+    lidar_wheel_pose_gate_m: 0.35
     lidar_wheel_yaw_gate_deg: 8.0
-    enable_lidar_wheel_yaw_update: true
+    enable_lidar_wheel_yaw_update: false
     allow_lidar_wheel_initialization: true
-    lidar_wheel_position_mahalanobis_gate: 2.0
+    lidar_wheel_position_mahalanobis_gate: 4.0
     lidar_wheel_position_covariance_scale: 2.0
     lidar_wheel_yaw_covariance_scale: 10.0
     lidar_wheel_min_position_variance_m2: 0.0025
     lidar_wheel_min_yaw_variance_rad2: 0.0300
-    lidar_wheel_max_position_variance_m2: 0.0125
+    lidar_wheel_max_position_variance_m2: 0.10
     lidar_wheel_max_yaw_variance_rad2: 0.0600
     enable_gps_pose_update: true
     gps_leader_odom_topic: /v2v/leader/odom
     gps_follower_odom_topic: /follower/localization/global/odom
-    gps_pose_gate_m: 1.00
+    gps_pose_gate_m: 2.00
     gps_yaw_gate_deg: 25.0
     gps_odom_timeout_sec: 0.50
-    gps_position_mahalanobis_gate: 4.0
-    gps_position_covariance_scale: 1.0
+    gps_position_mahalanobis_gate: 6.0
+    gps_position_covariance_scale: 2.0
     gps_yaw_covariance_scale: 1.0
     gps_min_position_variance_m2: 0.0025
     gps_min_yaw_variance_rad2: 0.0100
-    gps_max_position_variance_m2: 1.0
+    gps_max_position_variance_m2: 4.0
     gps_max_yaw_variance_rad2: 0.50
 
 pose_rviz_marker_node:

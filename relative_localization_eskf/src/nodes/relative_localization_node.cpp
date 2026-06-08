@@ -191,29 +191,29 @@ public:
     declare_parameter("leader_base_to_rear_z_m", 0.0525);
     declare_parameter("enable_lidar_wheel_pose_update", true);
     declare_parameter("lidar_wheel_odom_topic", "/follower/localization/lidar_wheels/leader_base_detection");
-    declare_parameter("lidar_wheel_pose_gate_m", 0.12);
+    declare_parameter("lidar_wheel_pose_gate_m", 0.35);
     declare_parameter("lidar_wheel_yaw_gate_deg", 8.0);
     declare_parameter("enable_lidar_wheel_yaw_update", false);
-    declare_parameter("allow_lidar_wheel_initialization", false);
-    declare_parameter("lidar_wheel_position_mahalanobis_gate", 2.0);
-    declare_parameter("lidar_wheel_position_covariance_scale", 6.0);
+    declare_parameter("allow_lidar_wheel_initialization", true);
+    declare_parameter("lidar_wheel_position_mahalanobis_gate", 4.0);
+    declare_parameter("lidar_wheel_position_covariance_scale", 2.0);
     declare_parameter("lidar_wheel_yaw_covariance_scale", 10.0);
-    declare_parameter("lidar_wheel_min_position_variance_m2", 0.0100);
+    declare_parameter("lidar_wheel_min_position_variance_m2", 0.0025);
     declare_parameter("lidar_wheel_min_yaw_variance_rad2", 0.0300);
-    declare_parameter("lidar_wheel_max_position_variance_m2", 0.0200);
+    declare_parameter("lidar_wheel_max_position_variance_m2", 0.10);
     declare_parameter("lidar_wheel_max_yaw_variance_rad2", 0.0600);
     declare_parameter("enable_gps_pose_update", true);
     declare_parameter("gps_leader_odom_topic", "/v2v/leader/odom");
     declare_parameter("gps_follower_odom_topic", "/follower/localization/global/odom");
-    declare_parameter("gps_pose_gate_m", 1.00);
+    declare_parameter("gps_pose_gate_m", 2.00);
     declare_parameter("gps_yaw_gate_deg", 25.0);
     declare_parameter("gps_odom_timeout_sec", 0.50);
-    declare_parameter("gps_position_mahalanobis_gate", 4.0);
-    declare_parameter("gps_position_covariance_scale", 1.0);
+    declare_parameter("gps_position_mahalanobis_gate", 6.0);
+    declare_parameter("gps_position_covariance_scale", 2.0);
     declare_parameter("gps_yaw_covariance_scale", 1.0);
     declare_parameter("gps_min_position_variance_m2", 0.0025);
     declare_parameter("gps_min_yaw_variance_rad2", 0.0100);
-    declare_parameter("gps_max_position_variance_m2", 1.0);
+    declare_parameter("gps_max_position_variance_m2", 4.0);
     declare_parameter("gps_max_yaw_variance_rad2", 0.50);
 
     board_frame_ = get_parameter("board_frame").as_string();
@@ -1157,6 +1157,10 @@ private:
     const Eigen::Isometry3d leader_from_base = follower_from_leader.inverse();
     const Eigen::Matrix<double, 6, 6> leader_cov =
       transform_pose_covariance(covariance_from_odom(*msg), leader_from_base);
+    diag_.lidar_wheel_yaw_used = enable_lidar_wheel_yaw_update_;
+    diag_.lidar_wheel_position_variance_m2 = std::max(
+      covariance_value(leader_cov, 0, 0, 0.0), covariance_value(leader_cov, 1, 1, 0.0));
+    diag_.lidar_wheel_yaw_variance_rad2 = covariance_value(leader_cov, 5, 5, 0.0);
     const auto outcome = apply_pose_measurement(
       ns, leader_from_base, leader_cov, lidar_wheel_pose_gate_m_,
       lidar_wheel_position_mahalanobis_gate_, lidar_wheel_yaw_gate_rad_,
@@ -1164,6 +1168,8 @@ private:
       lidar_wheel_position_covariance_scale_, lidar_wheel_yaw_covariance_scale_,
       lidar_wheel_min_position_variance_m2_, lidar_wheel_min_yaw_variance_rad2_,
       lidar_wheel_max_position_variance_m2_, lidar_wheel_max_yaw_variance_rad2_, "lidar_wheel");
+    diag_.lidar_wheel_update_applied = outcome.first;
+    diag_.lidar_wheel_update_reason = outcome.second;
     if (!outcome.first) {
       diag_.last_skip_reason = outcome.second;
     }
@@ -1206,6 +1212,7 @@ private:
     diag_.gps_leader_fresh = leader_fresh;
     diag_.gps_follower_fresh = follower_fresh;
     diag_.gps_update_applied = false;
+    diag_.gps_duplicate_or_old_stamp = false;
     if (!leader_fresh || !follower_fresh) {
       diag_.gps_yaw_used = false;
       if (!leader_fresh && !follower_fresh) {
@@ -1228,6 +1235,8 @@ private:
     const int64_t follower_ns = stamp_ns(latest_gps_follower_odom_->header.stamp);
     const int64_t ns = std::min(leader_ns, follower_ns);
     if (last_gps_update_stamp_ns_ && ns <= *last_gps_update_stamp_ns_) {
+      diag_.gps_yaw_used = false;
+      diag_.gps_duplicate_or_old_stamp = true;
       diag_.gps_update_reason = "gps_duplicate_or_old_stamp";
       return;
     }
@@ -1474,27 +1483,27 @@ private:
   double leader_base_to_rear_y_m_{0.0};
   double leader_base_to_rear_z_m_{0.0525};
   bool enable_lidar_wheel_pose_update_{true};
-  double lidar_wheel_pose_gate_m_{0.12};
+  double lidar_wheel_pose_gate_m_{0.35};
   double lidar_wheel_yaw_gate_rad_{8.0 * M_PI / 180.0};
   bool enable_lidar_wheel_yaw_update_{false};
-  bool allow_lidar_wheel_initialization_{false};
-  double lidar_wheel_position_mahalanobis_gate_{2.0};
-  double lidar_wheel_position_covariance_scale_{6.0};
+  bool allow_lidar_wheel_initialization_{true};
+  double lidar_wheel_position_mahalanobis_gate_{4.0};
+  double lidar_wheel_position_covariance_scale_{2.0};
   double lidar_wheel_yaw_covariance_scale_{10.0};
-  double lidar_wheel_min_position_variance_m2_{0.0100};
+  double lidar_wheel_min_position_variance_m2_{0.0025};
   double lidar_wheel_min_yaw_variance_rad2_{0.0300};
-  double lidar_wheel_max_position_variance_m2_{0.0200};
+  double lidar_wheel_max_position_variance_m2_{0.10};
   double lidar_wheel_max_yaw_variance_rad2_{0.0600};
   bool enable_gps_pose_update_{true};
-  double gps_pose_gate_m_{1.00};
+  double gps_pose_gate_m_{2.00};
   double gps_yaw_gate_rad_{25.0 * M_PI / 180.0};
   double gps_odom_timeout_sec_{0.50};
-  double gps_position_mahalanobis_gate_{4.0};
-  double gps_position_covariance_scale_{1.0};
+  double gps_position_mahalanobis_gate_{6.0};
+  double gps_position_covariance_scale_{2.0};
   double gps_yaw_covariance_scale_{1.0};
   double gps_min_position_variance_m2_{0.0025};
   double gps_min_yaw_variance_rad2_{0.0100};
-  double gps_max_position_variance_m2_{1.0};
+  double gps_max_position_variance_m2_{4.0};
   double gps_max_yaw_variance_rad2_{0.50};
   double reset_timeout_sec_{1.0};
   double vision_delay_buffer_sec_{2.0};

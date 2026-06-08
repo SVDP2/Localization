@@ -161,7 +161,7 @@ private:
     declare_parameter("use_aruco_prior", true);
     declare_parameter("aruco_prior_timeout_sec", 0.50);
     declare_parameter("base_frame", "follower/base_link");
-    declare_parameter("leader_base_detection_frame", "leader/base_link_lidar");
+    declare_parameter("leader_base_detection_frame", "leader/base_link");
     declare_parameter("leader_rear_frame", "leader/leader_rear");
     declare_parameter(
       "leader_base_odom_topic",
