@@ -5,6 +5,7 @@ ublox_gps_node:
     device: /dev/ttyACM1
     
     frame_id: follower/follower_gps
+    config_on_startup: true
     rate: 8.0                   # in Hz
     nav_rate: 1                 
                                 
@@ -15,10 +16,11 @@ ublox_gps_node:
       baudrate: 115200
      
     gnss:
-      glonass: true
-      beidou: true
+      glonass: false
+      beidou: false
       gps: true
       qzss: true
+      qzss_sig_cfg: 1114112
       galileo: true
       imes: false
     
