@@ -1,0 +1,2 @@
+# u-blox ZED-F9P/F9R USB CDC-ACM receiver.
+ATTRS{idVendor}=="1546", ATTRS{idProduct}=="01a9", MODE="0666", GROUP="plugdev", ENV{ID_MM_DEVICE_IGNORE}="1"

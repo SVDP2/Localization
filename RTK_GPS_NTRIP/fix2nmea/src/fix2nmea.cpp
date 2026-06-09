@@ -1,4 +1,6 @@
 #include <chrono>
+#include <cmath>
+#include <string>
 
 #include "nmea_msgs/msg/sentence.h"
 #include "sensor_msgs/msg/nav_sat_fix.h"
@@ -19,14 +21,23 @@ class Transformer : public rclcpp::Node
   Transformer() 
   : Node("fix2nmea")
   {
-   
-	//Publishes follower NMEA sentences for the namespaced NTRIP client.
-	nmea_pub_ = this->create_publisher<nmea_msgs::msg::Sentence>("/follower/ntrip_client/nmea", 10);  
-	
-      	
-      	//Subscribes to obtain NavSatFix messages from topic /ublox_gps_node/fix
-      	navsatfix_sub_ = this->create_subscription<sensor_msgs::msg::NavSatFix>("ublox_gps_node/fix", 10, std::bind(&Transformer::receiveNavSatFix, this, _1));
-      	//navhpposllh_sub_ = this->create_subscription<ublox_msgs::msg::NavHPPOSLLH>("ublox_gps_node/fix", 10, std::bind(&Transformer::receiveNavHpPosLlh, this, _1));
+    this->declare_parameter<std::string>("fix_topic", "/follower/f9r/fix");
+    this->declare_parameter<std::string>("nmea_topic", "/follower/ntrip_client/nmea");
+
+    const auto fix_topic = this->get_parameter("fix_topic").as_string();
+    const auto nmea_topic = this->get_parameter("nmea_topic").as_string();
+
+	  nmea_pub_ = this->create_publisher<nmea_msgs::msg::Sentence>(nmea_topic, 10);  
+    navsatfix_sub_ = this->create_subscription<sensor_msgs::msg::NavSatFix>(
+      fix_topic,
+      rclcpp::SensorDataQoS(),
+      std::bind(&Transformer::receiveNavSatFix, this, _1));
+
+    RCLCPP_INFO(
+      this->get_logger(),
+      "fix2nmea started: fix_topic=%s, nmea_topic=%s",
+      fix_topic.c_str(),
+      nmea_topic.c_str());
   }
   
   private:
@@ -43,26 +54,37 @@ class Transformer : public rclcpp::Node
 
   	char buf[255]; // Buffer for GPGGA sentence
 
+    if (!std::isfinite(navsat_msg->latitude) ||
+        !std::isfinite(navsat_msg->longitude) ||
+        !std::isfinite(navsat_msg->altitude)) {
+      RCLCPP_WARN_THROTTLE(
+        this->get_logger(),
+        *this->get_clock(),
+        5000,
+        "dropping NavSatFix to NMEA conversion: non-finite LLA");
+      return;
+    }
+
   	// Time conversion
   	//auto time = navsat_msg->header.stamp.toBoost().time_of_day();	
   	boost::posix_time::ptime t = boost::posix_time::second_clock::universal_time();
   	auto time = t.time_of_day();
-  	long int deci_seconds = navsat_msg->header.stamp.sec / 1e7;
+  	long int centiseconds = (navsat_msg->header.stamp.nanosec / 10000000) % 100;
 
   	// Latitude conversion
   	char lat_dir = navsat_msg->latitude < 0.0 ? 'S' : 'N';
-  	int8_t lat_degs = navsat_msg->latitude;
-  	double lat_mins = (navsat_msg->latitude - (double) lat_degs) * 60.0;
-  	lat_degs = fabs(lat_degs); 
-  	lat_mins = fabs(lat_mins);
+  	double abs_lat = std::fabs(navsat_msg->latitude);
+  	int lat_degs = static_cast<int>(abs_lat);
+  	double lat_mins = (abs_lat - static_cast<double>(lat_degs)) * 60.0;
 
   	// Longitude conversion
   	char lon_dir = navsat_msg->longitude < 0.0 ? 'W' : 'E';
-  	int8_t lon_degs = navsat_msg->longitude;
-  	double lon_mins = (navsat_msg->longitude - (double) lon_degs) * 60.0;
+  	double abs_lon = std::fabs(navsat_msg->longitude);
+  	int lon_degs = static_cast<int>(abs_lon);
+  	double lon_mins = (abs_lon - static_cast<double>(lon_degs)) * 60.0;
 
   	// Status conversion
-  	int8_t status = navsat_msg->status.status >= sensor_msgs::msg::NavSatStatus::STATUS_FIX ? 4 : 3;
+  	int status = navsat_msg->status.status >= sensor_msgs::msg::NavSatStatus::STATUS_FIX ? 1 : 0;
 
   	// Minimum number of satellites is service times 4.
   	int num_satellites = 0;
@@ -88,13 +110,13 @@ class Transformer : public rclcpp::Node
   	
 	//double alt_geoid = 1.2;
 	
-  	uint8_t
-      	len = sprintf(buf,
-                    "$GNGGA,%02ld%02ld%02ld.%ld,%02d%04.7f,%c,%03d%05.7f,%c,%d,%d,0.63,%0.3f,M,1.2,M,",
+  	int len = snprintf(buf,
+                    sizeof(buf),
+                    "$GNGGA,%02ld%02ld%02ld.%02ld,%02d%010.7f,%c,%03d%010.7f,%c,%d,%d,0.63,%0.3f,M,1.2,M,",
                     time.hours(),
                     time.minutes(),
                     time.seconds(),
-                    deci_seconds,
+                    centiseconds,
                     lat_degs,
                     lat_mins,
                     lat_dir,
@@ -106,6 +128,14 @@ class Transformer : public rclcpp::Node
                     alt_msl
                     //alt_geoid
                     );
+    if (len <= 0 || static_cast<size_t>(len) >= sizeof(buf)) {
+      RCLCPP_WARN_THROTTLE(
+        this->get_logger(),
+        *this->get_clock(),
+        5000,
+        "dropping NavSatFix to NMEA conversion: sentence formatting failed");
+      return;
+    }
 
 	// Calculate checksum of sentence and add it to the end of the sentence
 	uint8_t checksum = 0;
@@ -113,7 +143,7 @@ class Transformer : public rclcpp::Node
   	{
     	checksum ^= buf[i];
   	}
-  	sprintf(&buf[len], "*%02X",checksum);
+  	snprintf(&buf[len], sizeof(buf) - static_cast<size_t>(len), "*%02X\r\n",checksum);
   
   	nmea_msgs::msg::Sentence nmea_msg;
   	nmea_msg.header = navsat_msg->header;
