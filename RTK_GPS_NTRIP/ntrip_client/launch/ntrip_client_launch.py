@@ -8,6 +8,16 @@ def generate_launch_description():
       return LaunchDescription([
           # Declare arguments with default values
           # RTCM mavros_msgs
+          #
+          # Known working caster profiles:
+          # - Seoul eSeoul SONP:
+          #   host:=gnss.eseoul.go.kr mountpoint:=SONP-RTCM32 ntrip_version:=Ntrip/2.0 username:=seoul password:=seoul
+          # - GNSSdata SONP:
+          #   host:=www.gnssdata.or.kr mountpoint:=SONP-RTCM32 ntrip_version:=None username:=<gnssdata_id> password:=<gnssdata_password>
+          # - GNSSdata SUWN:
+          #   host:=www.gnssdata.or.kr mountpoint:=SUWN-RTCM32 ntrip_version:=None username:=<gnssdata_id> password:=<gnssdata_password>
+          # eSeoul currently does not advertise SUWN-* mountpoints; do not combine
+          # host:=gnss.eseoul.go.kr with mountpoint:=SUWN-RTCM32.
  
           DeclareLaunchArgument('host',                  default_value='gnss.eseoul.go.kr'),
           DeclareLaunchArgument('port',                  default_value='2101'),
