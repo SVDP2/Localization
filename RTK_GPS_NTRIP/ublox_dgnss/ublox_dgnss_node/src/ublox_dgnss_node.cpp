@@ -13,13 +13,24 @@
 // limitations under the License.
 
 #include <unistd.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <sys/select.h>
+#include <sys/socket.h>
 #include <deque>
 #include <mutex>
 #include <string>
 #include <chrono>
 #include <ctime>
+#include <atomic>
+#include <array>
+#include <cmath>
+#include <functional>
+#include <iomanip>
 #include <memory>
 #include <optional>
+#include <sstream>
+#include <thread>
 #include <vector>
 #include <map>
 #include <algorithm>
@@ -106,6 +117,321 @@ struct rtcm_queue_frame_t
   FrameType frame_type;
 };
 
+struct EmbeddedNtripConfig
+{
+  bool enabled = false;
+  bool authenticate = true;
+  bool use_ssl = false;
+  std::string host;
+  int port = 2101;
+  std::string mountpoint;
+  std::string username;
+  std::string password;
+  std::string ntrip_version = "Ntrip/2.0";
+  double gga_interval_sec = 5.0;
+  double reconnect_wait_sec = 5.0;
+  double rtcm_timeout_sec = 4.0;
+};
+
+class EmbeddedNtripClient
+{
+public:
+  using GetGgaFn = std::function<std::optional<std::string>()>;
+  using RtcmFn = std::function<void (const uint8_t *, size_t)>;
+  using LogFn = std::function<void (const std::string &)>;
+
+  EmbeddedNtripClient(
+    EmbeddedNtripConfig config,
+    GetGgaFn get_gga,
+    RtcmFn on_rtcm,
+    LogFn log_info,
+    LogFn log_warn)
+  : config_(std::move(config)),
+    get_gga_(std::move(get_gga)),
+    on_rtcm_(std::move(on_rtcm)),
+    log_info_(std::move(log_info)),
+    log_warn_(std::move(log_warn))
+  {
+  }
+
+  ~EmbeddedNtripClient()
+  {
+    stop();
+  }
+
+  void start()
+  {
+    if (!config_.enabled || running_.exchange(true)) {
+      return;
+    }
+    worker_ = std::thread(&EmbeddedNtripClient::run, this);
+  }
+
+  void stop()
+  {
+    if (!running_.exchange(false)) {
+      return;
+    }
+    close_socket();
+    if (worker_.joinable()) {
+      worker_.join();
+    }
+  }
+
+private:
+  EmbeddedNtripConfig config_;
+  GetGgaFn get_gga_;
+  RtcmFn on_rtcm_;
+  LogFn log_info_;
+  LogFn log_warn_;
+  std::atomic<bool> running_{false};
+  std::thread worker_;
+  std::mutex socket_mutex_;
+  int socket_fd_ = -1;
+
+  static std::string base64_encode(const std::string & input)
+  {
+    static constexpr char alphabet[] =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string output;
+    int val = 0;
+    int valb = -6;
+    for (uint8_t c : input) {
+      val = (val << 8) + c;
+      valb += 8;
+      while (valb >= 0) {
+        output.push_back(alphabet[(val >> valb) & 0x3F]);
+        valb -= 6;
+      }
+    }
+    if (valb > -6) {
+      output.push_back(alphabet[((val << 8) >> (valb + 8)) & 0x3F]);
+    }
+    while (output.size() % 4) {
+      output.push_back('=');
+    }
+    return output;
+  }
+
+  static bool send_all(const int fd, const std::string & payload)
+  {
+    const char * data = payload.data();
+    size_t remaining = payload.size();
+    while (remaining > 0) {
+      const ssize_t sent = ::send(fd, data, remaining, MSG_NOSIGNAL);
+      if (sent <= 0) {
+        return false;
+      }
+      data += sent;
+      remaining -= static_cast<size_t>(sent);
+    }
+    return true;
+  }
+
+  static bool response_ok(const std::string & response)
+  {
+    return response.find("ICY 200 OK") != std::string::npos ||
+           response.find("HTTP/1.0 200 OK") != std::string::npos ||
+           response.find("HTTP/1.1 200 OK") != std::string::npos;
+  }
+
+  void run()
+  {
+    while (running_) {
+      try {
+        const int fd = connect_socket();
+        if (fd < 0) {
+          wait_before_reconnect("NTRIP connect failed");
+          continue;
+        }
+
+        {
+          std::lock_guard<std::mutex> lock(socket_mutex_);
+          socket_fd_ = fd;
+        }
+
+        if (!handshake(fd)) {
+          close_socket();
+          wait_before_reconnect("NTRIP handshake failed");
+          continue;
+        }
+
+        log_info_(
+          "Embedded NTRIP connected: " + config_.host + ":" +
+          std::to_string(config_.port) + "/" + config_.mountpoint);
+        serve_connected(fd);
+      } catch (const std::exception & e) {
+        close_socket();
+        wait_before_reconnect(std::string("Embedded NTRIP error: ") + e.what());
+      }
+    }
+    close_socket();
+  }
+
+  int connect_socket()
+  {
+    if (config_.use_ssl) {
+      log_warn_("Embedded NTRIP SSL is not supported by ublox_dgnss_node; use plain TCP.");
+      return -1;
+    }
+
+    addrinfo hints {};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    addrinfo * results = nullptr;
+    const std::string port = std::to_string(config_.port);
+    const int gai = ::getaddrinfo(config_.host.c_str(), port.c_str(), &hints, &results);
+    if (gai != 0) {
+      log_warn_(std::string("NTRIP getaddrinfo failed: ") + gai_strerror(gai));
+      return -1;
+    }
+
+    int fd = -1;
+    for (addrinfo * rp = results; rp != nullptr; rp = rp->ai_next) {
+      fd = ::socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+      if (fd < 0) {
+        continue;
+      }
+      timeval timeout {};
+      timeout.tv_sec = 5;
+      timeout.tv_usec = 0;
+      ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+      ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+      if (::connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) {
+        break;
+      }
+      ::close(fd);
+      fd = -1;
+    }
+    ::freeaddrinfo(results);
+    return fd;
+  }
+
+  bool handshake(const int fd)
+  {
+    std::ostringstream request;
+    request << "GET /" << config_.mountpoint << " HTTP/1.0\r\n";
+    request << "User-Agent: NTRIP ublox_dgnss_node\r\n";
+    request << "Host: " << config_.host << ":" << config_.port << "\r\n";
+    if (!config_.ntrip_version.empty() && config_.ntrip_version != "None") {
+      request << "Ntrip-Version: " << config_.ntrip_version << "\r\n";
+    }
+    if (config_.authenticate) {
+      request << "Authorization: Basic "
+              << base64_encode(config_.username + ":" + config_.password) << "\r\n";
+    }
+    request << "\r\n";
+
+    if (!send_all(fd, request.str())) {
+      return false;
+    }
+
+    std::string response;
+    std::array<char, 1024> buffer {};
+    while (running_ && response.find("\r\n\r\n") == std::string::npos && response.size() < 8192) {
+      const ssize_t n = ::recv(fd, buffer.data(), buffer.size(), 0);
+      if (n <= 0) {
+        return false;
+      }
+      response.append(buffer.data(), static_cast<size_t>(n));
+    }
+
+    const auto header_end = response.find("\r\n\r\n");
+    if (!response_ok(response.substr(0, header_end))) {
+      log_warn_("NTRIP caster rejected request: " + response.substr(0, header_end));
+      return false;
+    }
+
+    if (header_end != std::string::npos) {
+      const auto payload_start = header_end + 4;
+      if (payload_start < response.size()) {
+        const auto pending = response.substr(payload_start);
+        on_rtcm_(
+          reinterpret_cast<const uint8_t *>(pending.data()),
+          pending.size());
+      }
+    }
+    return true;
+  }
+
+  void serve_connected(const int fd)
+  {
+    auto last_gga = std::chrono::steady_clock::time_point {};
+    auto last_rtcm = std::chrono::steady_clock::time_point {};
+    bool received_rtcm = false;
+    std::array<uint8_t, 4096> buffer {};
+
+    while (running_) {
+      const auto now = std::chrono::steady_clock::now();
+      if (last_gga.time_since_epoch().count() == 0 ||
+        std::chrono::duration<double>(now - last_gga).count() >= config_.gga_interval_sec)
+      {
+        if (const auto gga = get_gga_()) {
+          std::string payload = *gga;
+          if (payload.size() < 2 || payload.substr(payload.size() - 2) != "\r\n") {
+            payload += "\r\n";
+          }
+          if (!send_all(fd, payload)) {
+            throw std::runtime_error("failed to send GGA to caster");
+          }
+          last_gga = now;
+        }
+      }
+
+      fd_set read_set;
+      FD_ZERO(&read_set);
+      FD_SET(fd, &read_set);
+      timeval timeout {};
+      timeout.tv_sec = 0;
+      timeout.tv_usec = 200000;
+      const int ready = ::select(fd + 1, &read_set, nullptr, nullptr, &timeout);
+      if (ready < 0) {
+        throw std::runtime_error("select failed on NTRIP socket");
+      }
+      if (ready == 0) {
+        if (received_rtcm &&
+          std::chrono::duration<double>(now - last_rtcm).count() > config_.rtcm_timeout_sec)
+        {
+          throw std::runtime_error("RTCM timeout");
+        }
+        continue;
+      }
+
+      const ssize_t n = ::recv(fd, buffer.data(), buffer.size(), 0);
+      if (n <= 0) {
+        throw std::runtime_error("NTRIP caster closed connection");
+      }
+      received_rtcm = true;
+      last_rtcm = std::chrono::steady_clock::now();
+      on_rtcm_(buffer.data(), static_cast<size_t>(n));
+    }
+  }
+
+  void wait_before_reconnect(const std::string & reason)
+  {
+    if (running_) {
+      log_warn_(reason + "; reconnecting in " + std::to_string(config_.reconnect_wait_sec) + "s");
+    }
+    const auto step = std::chrono::milliseconds(100);
+    auto waited = std::chrono::duration<double>(0.0);
+    while (running_ && waited.count() < config_.reconnect_wait_sec) {
+      std::this_thread::sleep_for(step);
+      waited += step;
+    }
+  }
+
+  void close_socket()
+  {
+    std::lock_guard<std::mutex> lock(socket_mutex_);
+    if (socket_fd_ >= 0) {
+      ::shutdown(socket_fd_, SHUT_RDWR);
+      ::close(socket_fd_);
+      socket_fd_ = -1;
+    }
+  }
+};
+
 class UbloxDGNSSNode : public rclcpp::Node
 {
 public:
@@ -123,6 +449,9 @@ public:
       [this]() {
         RCLCPP_INFO(this->get_logger(), "Initiating shutdown ...");
         this->keep_running_ = false;
+        if (embedded_ntrip_client_) {
+          embedded_ntrip_client_->stop();
+        }
         if (usbc_ != nullptr) {
           usbc_->shutdown();
         }
@@ -159,6 +488,8 @@ public:
     check_for_ubx_config_file_param(parameters_client);
     check_for_device_serial_param(parameters_client);
     check_for_frame_id_param(parameters_client);
+    declare_embedded_ntrip_parameters();
+    embedded_ntrip_config_ = load_embedded_ntrip_config();
 
     // Initialize ParameterManager EARLY for parameter validation
     parameter_manager_ = std::make_shared<ParameterManager>(get_logger());
@@ -442,6 +773,8 @@ public:
     RCLCPP_DEBUG(get_logger(), "initialising all ublox configuration parameters...");
     ublox_init_all_cfg_params();
 
+    start_embedded_ntrip_if_enabled();
+
     is_initialising_ = false;
     RCLCPP_DEBUG(get_logger(), "initialisation finished");
   }
@@ -451,6 +784,10 @@ public:
   ~UbloxDGNSSNode()
   {
     keep_running_ = false;
+    if (embedded_ntrip_client_) {
+      embedded_ntrip_client_->stop();
+      embedded_ntrip_client_.reset();
+    }
     if (usbc_) {
       usbc_->shutdown();
       usbc_.reset();
@@ -639,6 +976,8 @@ private:
   std::shared_ptr<ubx::rxm::UbxRxm> ubx_rxm_;
   std::shared_ptr<ubx::esf::UbxEsf> ubx_esf_;
   std::shared_ptr<ubx::sec::UbxSec> ubx_sec_;
+  EmbeddedNtripConfig embedded_ntrip_config_;
+  std::unique_ptr<EmbeddedNtripClient> embedded_ntrip_client_;
 
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr parameters_callback_handle_;
 // specific to libusb to to process events asynchronously
@@ -693,6 +1032,21 @@ private:
 
   std::string unique_id_;
 
+  struct NtripGgaState
+  {
+    bool has_llh = false;
+    double latitude_deg = 0.0;
+    double longitude_deg = 0.0;
+    double altitude_msl_m = 0.0;
+    double geoid_separation_m = 0.0;
+    int quality = 0;
+    int satellites = 12;
+    double hdop = 0.63;
+  };
+
+  mutable std::mutex ntrip_gga_mutex_;
+  NtripGgaState ntrip_gga_state_;
+
   rclcpp::Publisher<ublox_ubx_msgs::msg::UBXNavClock>::SharedPtr ubx_nav_clock_pub_;
   rclcpp::Publisher<ublox_ubx_msgs::msg::UBXNavCov>::SharedPtr ubx_nav_cov_pub_;
   rclcpp::Publisher<ublox_ubx_msgs::msg::UBXNavDOP>::SharedPtr ubx_nav_dop_pub_;
@@ -735,6 +1089,97 @@ private:
   rclcpp::Service<ublox_ubx_interfaces::srv::WarmStart>::SharedPtr warm_start_service_;
   rclcpp::Service<ublox_ubx_interfaces::srv::ColdStart>::SharedPtr cold_start_service_;
   rclcpp::Service<ublox_ubx_interfaces::srv::ResetODO>::SharedPtr reset_odo_service_;
+
+  UBLOX_DGNSS_NODE_LOCAL
+  void declare_embedded_ntrip_parameters()
+  {
+    if (!has_parameter("EMBEDDED_NTRIP_ENABLED")) {
+      declare_parameter<bool>("EMBEDDED_NTRIP_ENABLED", false);
+    }
+    if (!has_parameter("EMBEDDED_NTRIP_HOST")) {
+      declare_parameter<std::string>("EMBEDDED_NTRIP_HOST", "");
+    }
+    if (!has_parameter("EMBEDDED_NTRIP_PORT")) {
+      declare_parameter<int>("EMBEDDED_NTRIP_PORT", 2101);
+    }
+    if (!has_parameter("EMBEDDED_NTRIP_MOUNTPOINT")) {
+      declare_parameter<std::string>("EMBEDDED_NTRIP_MOUNTPOINT", "");
+    }
+    if (!has_parameter("EMBEDDED_NTRIP_AUTHENTICATE")) {
+      declare_parameter<bool>("EMBEDDED_NTRIP_AUTHENTICATE", true);
+    }
+    if (!has_parameter("EMBEDDED_NTRIP_USERNAME")) {
+      declare_parameter<std::string>("EMBEDDED_NTRIP_USERNAME", "");
+    }
+    if (!has_parameter("EMBEDDED_NTRIP_PASSWORD")) {
+      declare_parameter<std::string>("EMBEDDED_NTRIP_PASSWORD", "");
+    }
+    if (!has_parameter("EMBEDDED_NTRIP_VERSION")) {
+      declare_parameter<std::string>("EMBEDDED_NTRIP_VERSION", "Ntrip/2.0");
+    }
+    if (!has_parameter("EMBEDDED_NTRIP_USE_SSL")) {
+      declare_parameter<bool>("EMBEDDED_NTRIP_USE_SSL", false);
+    }
+    if (!has_parameter("EMBEDDED_NTRIP_GGA_INTERVAL_SEC")) {
+      declare_parameter<double>("EMBEDDED_NTRIP_GGA_INTERVAL_SEC", 5.0);
+    }
+    if (!has_parameter("EMBEDDED_NTRIP_RECONNECT_WAIT_SEC")) {
+      declare_parameter<double>("EMBEDDED_NTRIP_RECONNECT_WAIT_SEC", 5.0);
+    }
+    if (!has_parameter("EMBEDDED_NTRIP_RTCM_TIMEOUT_SEC")) {
+      declare_parameter<double>("EMBEDDED_NTRIP_RTCM_TIMEOUT_SEC", 4.0);
+    }
+  }
+
+  UBLOX_DGNSS_NODE_LOCAL
+  EmbeddedNtripConfig load_embedded_ntrip_config()
+  {
+    EmbeddedNtripConfig config;
+    config.enabled = get_parameter("EMBEDDED_NTRIP_ENABLED").as_bool();
+    config.host = get_parameter("EMBEDDED_NTRIP_HOST").as_string();
+    config.port = static_cast<int>(get_parameter("EMBEDDED_NTRIP_PORT").as_int());
+    config.mountpoint = get_parameter("EMBEDDED_NTRIP_MOUNTPOINT").as_string();
+    config.authenticate = get_parameter("EMBEDDED_NTRIP_AUTHENTICATE").as_bool();
+    config.username = get_parameter("EMBEDDED_NTRIP_USERNAME").as_string();
+    config.password = get_parameter("EMBEDDED_NTRIP_PASSWORD").as_string();
+    config.ntrip_version = get_parameter("EMBEDDED_NTRIP_VERSION").as_string();
+    config.use_ssl = get_parameter("EMBEDDED_NTRIP_USE_SSL").as_bool();
+    config.gga_interval_sec = get_parameter("EMBEDDED_NTRIP_GGA_INTERVAL_SEC").as_double();
+    config.reconnect_wait_sec = get_parameter("EMBEDDED_NTRIP_RECONNECT_WAIT_SEC").as_double();
+    config.rtcm_timeout_sec = get_parameter("EMBEDDED_NTRIP_RTCM_TIMEOUT_SEC").as_double();
+    return config;
+  }
+
+  UBLOX_DGNSS_NODE_LOCAL
+  void start_embedded_ntrip_if_enabled()
+  {
+    if (!embedded_ntrip_config_.enabled) {
+      return;
+    }
+    if (embedded_ntrip_config_.host.empty() || embedded_ntrip_config_.mountpoint.empty()) {
+      RCLCPP_WARN(
+        get_logger(),
+        "Embedded NTRIP requested but host or mountpoint is empty; continuing without NTRIP.");
+      return;
+    }
+    if (embedded_ntrip_config_.port <= 0 || embedded_ntrip_config_.port > 65535) {
+      RCLCPP_WARN(get_logger(), "Embedded NTRIP port is invalid; continuing without NTRIP.");
+      return;
+    }
+
+    embedded_ntrip_client_ = std::make_unique<EmbeddedNtripClient>(
+      embedded_ntrip_config_,
+      [this]() {return this->latest_ntrip_gga();},
+      [this](const uint8_t * data, const size_t size) {this->write_rtcm_to_device(data, size);},
+      [this](const std::string & msg) {RCLCPP_INFO(this->get_logger(), "%s", msg.c_str());},
+      [this](const std::string & msg) {RCLCPP_WARN(this->get_logger(), "%s", msg.c_str());});
+    embedded_ntrip_client_->start();
+    RCLCPP_INFO(
+      get_logger(), "Embedded NTRIP enabled for %s:%d/%s",
+      embedded_ntrip_config_.host.c_str(),
+      embedded_ntrip_config_.port,
+      embedded_ntrip_config_.mountpoint.c_str());
+  }
 
   UBLOX_DGNSS_NODE_LOCAL
   void check_for_ubx_config_file_param(rclcpp::SyncParametersClient::SharedPtr param_client)
@@ -1538,8 +1983,142 @@ public:
   }
 
   UBLOX_DGNSS_NODE_LOCAL
-  void rtcm_callback(const rtcm_msgs::msg::Message & msg) const
+  static std::string format_nmea_degrees_minutes(const double degrees, const int degree_width)
   {
+    const double abs_degrees = std::fabs(degrees);
+    const int whole_degrees = static_cast<int>(abs_degrees);
+    const double minutes = (abs_degrees - static_cast<double>(whole_degrees)) * 60.0;
+    std::ostringstream oss;
+    oss << std::setfill('0') << std::setw(degree_width) << whole_degrees
+        << std::fixed << std::setprecision(7) << std::setw(10) << minutes;
+    return oss.str();
+  }
+
+  UBLOX_DGNSS_NODE_LOCAL
+  static std::string add_nmea_checksum(const std::string & sentence_without_checksum)
+  {
+    uint8_t checksum = 0;
+    for (size_t i = 1; i < sentence_without_checksum.size(); ++i) {
+      checksum ^= static_cast<uint8_t>(sentence_without_checksum[i]);
+    }
+    std::ostringstream oss;
+    oss << sentence_without_checksum << "*" << std::uppercase << std::hex
+        << std::setfill('0') << std::setw(2) << static_cast<int>(checksum);
+    return oss.str();
+  }
+
+  UBLOX_DGNSS_NODE_LOCAL
+  std::optional<std::string> latest_ntrip_gga() const
+  {
+    NtripGgaState state;
+    {
+      std::lock_guard<std::mutex> lock(ntrip_gga_mutex_);
+      state = ntrip_gga_state_;
+    }
+    if (!state.has_llh ||
+      !std::isfinite(state.latitude_deg) ||
+      !std::isfinite(state.longitude_deg) ||
+      !std::isfinite(state.altitude_msl_m))
+    {
+      return std::nullopt;
+    }
+
+    const auto now = std::chrono::system_clock::now();
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+      now.time_since_epoch()) % 1000;
+    const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+    std::tm utc {};
+    gmtime_r(&now_time, &utc);
+
+    const char lat_dir = state.latitude_deg < 0.0 ? 'S' : 'N';
+    const char lon_dir = state.longitude_deg < 0.0 ? 'W' : 'E';
+    const int centiseconds = static_cast<int>(ms.count() / 10);
+    const int satellites = std::max(0, std::min(state.satellites, 99));
+
+    std::ostringstream sentence;
+    sentence << "$GNGGA,"
+             << std::setfill('0') << std::setw(2) << utc.tm_hour
+             << std::setw(2) << utc.tm_min
+             << std::setw(2) << utc.tm_sec
+             << "." << std::setw(2) << centiseconds << ","
+             << format_nmea_degrees_minutes(state.latitude_deg, 2) << "," << lat_dir << ","
+             << format_nmea_degrees_minutes(state.longitude_deg, 3) << "," << lon_dir << ","
+             << state.quality << ","
+             << std::setw(2) << satellites << ","
+             << std::fixed << std::setprecision(2) << state.hdop << ","
+             << std::setprecision(3) << state.altitude_msl_m << ",M,"
+             << std::setprecision(3) << state.geoid_separation_m << ",M,,";
+
+    return add_nmea_checksum(sentence.str());
+  }
+
+  UBLOX_DGNSS_NODE_LOCAL
+  int nmea_quality_from_status(const ubx::nav::status::NavStatusPayload & payload) const
+  {
+    if (!payload.flags.bits.gpsFixOK || static_cast<int>(payload.gpsFix) < 2) {
+      return 0;
+    }
+    if (payload.fixStat.bits.carrSolnValid) {
+      if (payload.flags2.bits.carrSoln ==
+        ubx::nav::status::carrier_phase_solution_with_fixed_ambiguities)
+      {
+        return 4;
+      }
+      if (payload.flags2.bits.carrSoln ==
+        ubx::nav::status::carrier_phase_solution_with_floating_ambiguities)
+      {
+        return 5;
+      }
+    }
+    if (payload.flags.bits.diffSoln || payload.fixStat.bits.diffCorr) {
+      return 2;
+    }
+    return 1;
+  }
+
+  UBLOX_DGNSS_NODE_LOCAL
+  void update_ntrip_gga_status(const ubx::nav::status::NavStatusPayload & payload)
+  {
+    std::lock_guard<std::mutex> lock(ntrip_gga_mutex_);
+    ntrip_gga_state_.quality = nmea_quality_from_status(payload);
+  }
+
+  UBLOX_DGNSS_NODE_LOCAL
+  void update_ntrip_gga_llh(const ubx::nav::hpposllh::NavHPPosLLHPayload & payload)
+  {
+    if (payload.flags.bits.invalid_lon ||
+      payload.flags.bits.invalid_lat ||
+      payload.flags.bits.invalid_hMSL ||
+      payload.flags.bits.invalid_lonHp ||
+      payload.flags.bits.invalid_latHp ||
+      payload.flags.bits.invalid_hMSLHp)
+    {
+      return;
+    }
+
+    const double lat = static_cast<double>(payload.lat) * 1.0e-7 +
+      static_cast<double>(payload.latHp) * 1.0e-9;
+    const double lon = static_cast<double>(payload.lon) * 1.0e-7 +
+      static_cast<double>(payload.lonHp) * 1.0e-9;
+    const double height = static_cast<double>(payload.height) * 1.0e-3 +
+      static_cast<double>(payload.heightHp) * 1.0e-4;
+    const double hmsl = static_cast<double>(payload.hMSL) * 1.0e-3 +
+      static_cast<double>(payload.hMSLHp) * 1.0e-4;
+
+    std::lock_guard<std::mutex> lock(ntrip_gga_mutex_);
+    ntrip_gga_state_.has_llh = true;
+    ntrip_gga_state_.latitude_deg = lat;
+    ntrip_gga_state_.longitude_deg = lon;
+    ntrip_gga_state_.altitude_msl_m = hmsl;
+    ntrip_gga_state_.geoid_separation_m = height - hmsl;
+  }
+
+  UBLOX_DGNSS_NODE_LOCAL
+  void write_rtcm_to_device(const uint8_t * data, const size_t size) const
+  {
+    if (data == nullptr || size == 0) {
+      return;
+    }
     if (usbc_ == nullptr || !usbc_->dev_valid()) {
       if (!usb_rtcm_detached_logged_) {
         RCLCPP_WARN(get_logger(), "usbc_ not valid - not sending rtcm to device!");
@@ -1554,23 +2133,30 @@ public:
       }
       return;
     }
-    // USB attached & valid - reset latch so the next detach episode logs once again
-    usb_rtcm_detached_logged_ = false;
-    std::ostringstream oss;
-    std::vector<u_char> data_out;
-    data_out.reserve(msg.message.size());
-    for (auto b : msg.message) {
-      oss << std::hex << std::setfill('0') << std::setw(2) << +b;
-      data_out.push_back(b);
-    }
 
-    RCLCPP_DEBUG(get_logger(), "rtcm_callback msg.message: 0x%s", oss.str().c_str());
+    usb_rtcm_detached_logged_ = false;
+    std::vector<u_char> data_out;
+    data_out.reserve(size);
+    for (size_t i = 0; i < size; ++i) {
+      data_out.push_back(data[i]);
+    }
 
     try {
       usbc_->write_buffer(data_out.data(), data_out.size());
     } catch (const usb::UsbException & e) {
       RCLCPP_WARN(get_logger(), "RTCM write failed: %s", e.what());
     }
+  }
+
+  UBLOX_DGNSS_NODE_LOCAL
+  void rtcm_callback(const rtcm_msgs::msg::Message & msg) const
+  {
+    std::ostringstream oss;
+    for (auto b : msg.message) {
+      oss << std::hex << std::setfill('0') << std::setw(2) << +b;
+    }
+    RCLCPP_DEBUG(get_logger(), "rtcm_callback msg.message: 0x%s", oss.str().c_str());
+    write_rtcm_to_device(msg.message.data(), msg.message.size());
   }
 
 // handle host in from ublox gps to host callback
@@ -3289,6 +3875,7 @@ private:
     msg->h_acc = payload->hAcc;
     msg->v_acc = payload->vAcc;
 
+    update_ntrip_gga_llh(*payload);
     ubx_nav_hp_pos_llh_pub_->publish(*msg);
   }
 
@@ -3352,6 +3939,7 @@ private:
     msg->ttff = payload->ttff;
     msg->msss = payload->msss;
 
+    update_ntrip_gga_status(*payload);
     ubx_nav_status_pub_->publish(*msg);
   }
 
