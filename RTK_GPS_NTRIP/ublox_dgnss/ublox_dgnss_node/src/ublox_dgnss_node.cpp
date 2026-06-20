@@ -488,7 +488,6 @@ public:
     check_for_ubx_config_file_param(parameters_client);
     check_for_device_serial_param(parameters_client);
     check_for_frame_id_param(parameters_client);
-    declare_embedded_ntrip_parameters();
     embedded_ntrip_config_ = load_embedded_ntrip_config();
 
     // Initialize ParameterManager EARLY for parameter validation
@@ -1090,63 +1089,60 @@ private:
   rclcpp::Service<ublox_ubx_interfaces::srv::ColdStart>::SharedPtr cold_start_service_;
   rclcpp::Service<ublox_ubx_interfaces::srv::ResetODO>::SharedPtr reset_odo_service_;
 
-  UBLOX_DGNSS_NODE_LOCAL
-  void declare_embedded_ntrip_parameters()
+  template<typename T>
+  T get_ntrip_parameter_with_alias(
+    const std::string & canonical_name,
+    const std::string & legacy_name,
+    const T & default_value)
   {
-    if (!has_parameter("EMBEDDED_NTRIP_ENABLED")) {
-      declare_parameter<bool>("EMBEDDED_NTRIP_ENABLED", false);
+    const bool canonical_supplied = has_parameter(canonical_name);
+    const bool legacy_supplied = has_parameter(legacy_name);
+
+    if (!canonical_supplied) {
+      declare_parameter<T>(canonical_name, default_value);
     }
-    if (!has_parameter("EMBEDDED_NTRIP_HOST")) {
-      declare_parameter<std::string>("EMBEDDED_NTRIP_HOST", "");
+    if (!legacy_supplied) {
+      declare_parameter<T>(legacy_name, default_value);
     }
-    if (!has_parameter("EMBEDDED_NTRIP_PORT")) {
-      declare_parameter<int>("EMBEDDED_NTRIP_PORT", 2101);
+
+    if (canonical_supplied && legacy_supplied) {
+      RCLCPP_WARN(
+        get_logger(),
+        "Both %s and legacy %s were supplied; using %s",
+        canonical_name.c_str(), legacy_name.c_str(), canonical_name.c_str());
     }
-    if (!has_parameter("EMBEDDED_NTRIP_MOUNTPOINT")) {
-      declare_parameter<std::string>("EMBEDDED_NTRIP_MOUNTPOINT", "");
-    }
-    if (!has_parameter("EMBEDDED_NTRIP_AUTHENTICATE")) {
-      declare_parameter<bool>("EMBEDDED_NTRIP_AUTHENTICATE", true);
-    }
-    if (!has_parameter("EMBEDDED_NTRIP_USERNAME")) {
-      declare_parameter<std::string>("EMBEDDED_NTRIP_USERNAME", "");
-    }
-    if (!has_parameter("EMBEDDED_NTRIP_PASSWORD")) {
-      declare_parameter<std::string>("EMBEDDED_NTRIP_PASSWORD", "");
-    }
-    if (!has_parameter("EMBEDDED_NTRIP_VERSION")) {
-      declare_parameter<std::string>("EMBEDDED_NTRIP_VERSION", "Ntrip/2.0");
-    }
-    if (!has_parameter("EMBEDDED_NTRIP_USE_SSL")) {
-      declare_parameter<bool>("EMBEDDED_NTRIP_USE_SSL", false);
-    }
-    if (!has_parameter("EMBEDDED_NTRIP_GGA_INTERVAL_SEC")) {
-      declare_parameter<double>("EMBEDDED_NTRIP_GGA_INTERVAL_SEC", 5.0);
-    }
-    if (!has_parameter("EMBEDDED_NTRIP_RECONNECT_WAIT_SEC")) {
-      declare_parameter<double>("EMBEDDED_NTRIP_RECONNECT_WAIT_SEC", 5.0);
-    }
-    if (!has_parameter("EMBEDDED_NTRIP_RTCM_TIMEOUT_SEC")) {
-      declare_parameter<double>("EMBEDDED_NTRIP_RTCM_TIMEOUT_SEC", 4.0);
-    }
+
+    return get_parameter(canonical_supplied ? canonical_name : legacy_name).get_value<T>();
   }
 
   UBLOX_DGNSS_NODE_LOCAL
   EmbeddedNtripConfig load_embedded_ntrip_config()
   {
     EmbeddedNtripConfig config;
-    config.enabled = get_parameter("EMBEDDED_NTRIP_ENABLED").as_bool();
-    config.host = get_parameter("EMBEDDED_NTRIP_HOST").as_string();
-    config.port = static_cast<int>(get_parameter("EMBEDDED_NTRIP_PORT").as_int());
-    config.mountpoint = get_parameter("EMBEDDED_NTRIP_MOUNTPOINT").as_string();
-    config.authenticate = get_parameter("EMBEDDED_NTRIP_AUTHENTICATE").as_bool();
-    config.username = get_parameter("EMBEDDED_NTRIP_USERNAME").as_string();
-    config.password = get_parameter("EMBEDDED_NTRIP_PASSWORD").as_string();
-    config.ntrip_version = get_parameter("EMBEDDED_NTRIP_VERSION").as_string();
-    config.use_ssl = get_parameter("EMBEDDED_NTRIP_USE_SSL").as_bool();
-    config.gga_interval_sec = get_parameter("EMBEDDED_NTRIP_GGA_INTERVAL_SEC").as_double();
-    config.reconnect_wait_sec = get_parameter("EMBEDDED_NTRIP_RECONNECT_WAIT_SEC").as_double();
-    config.rtcm_timeout_sec = get_parameter("EMBEDDED_NTRIP_RTCM_TIMEOUT_SEC").as_double();
+    config.enabled = get_ntrip_parameter_with_alias<bool>(
+      "ntrip_enabled", "EMBEDDED_NTRIP_ENABLED", false);
+    config.host = get_ntrip_parameter_with_alias<std::string>(
+      "ntrip_host", "EMBEDDED_NTRIP_HOST", "");
+    config.port = get_ntrip_parameter_with_alias<int>(
+      "ntrip_port", "EMBEDDED_NTRIP_PORT", 2101);
+    config.mountpoint = get_ntrip_parameter_with_alias<std::string>(
+      "ntrip_mountpoint", "EMBEDDED_NTRIP_MOUNTPOINT", "");
+    config.authenticate = get_ntrip_parameter_with_alias<bool>(
+      "ntrip_authenticate", "EMBEDDED_NTRIP_AUTHENTICATE", true);
+    config.username = get_ntrip_parameter_with_alias<std::string>(
+      "ntrip_username", "EMBEDDED_NTRIP_USERNAME", "");
+    config.password = get_ntrip_parameter_with_alias<std::string>(
+      "ntrip_password", "EMBEDDED_NTRIP_PASSWORD", "");
+    config.ntrip_version = get_ntrip_parameter_with_alias<std::string>(
+      "ntrip_version", "EMBEDDED_NTRIP_VERSION", "Ntrip/2.0");
+    config.use_ssl = get_ntrip_parameter_with_alias<bool>(
+      "ntrip_use_https", "EMBEDDED_NTRIP_USE_SSL", false);
+    config.gga_interval_sec = get_ntrip_parameter_with_alias<double>(
+      "ntrip_gga_interval_s", "EMBEDDED_NTRIP_GGA_INTERVAL_SEC", 5.0);
+    config.reconnect_wait_sec = get_ntrip_parameter_with_alias<double>(
+      "ntrip_reconnect_wait_s", "EMBEDDED_NTRIP_RECONNECT_WAIT_SEC", 5.0);
+    config.rtcm_timeout_sec = get_ntrip_parameter_with_alias<double>(
+      "ntrip_rtcm_timeout_s", "EMBEDDED_NTRIP_RTCM_TIMEOUT_SEC", 10.0);
     return config;
   }
 
