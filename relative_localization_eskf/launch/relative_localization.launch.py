@@ -95,6 +95,7 @@ def generate_launch_description():
     lidar_scan_topic = LaunchConfiguration('lidar_scan_topic')
     publish_aruco_tf = LaunchConfiguration('publish_aruco_tf')
     publish_relative_tf = LaunchConfiguration('publish_relative_tf')
+    enable_relative_filter = LaunchConfiguration('enable_relative_filter')
     enable_pose_viz = LaunchConfiguration('enable_pose_viz')
     video_device = LaunchConfiguration('video_device')
     pixel_format = LaunchConfiguration('pixel_format')
@@ -127,6 +128,7 @@ def generate_launch_description():
         DeclareLaunchArgument('lidar_scan_topic', default_value='/follower/scan'),
         DeclareLaunchArgument('publish_aruco_tf', default_value='false'),
         DeclareLaunchArgument('publish_relative_tf', default_value='true'),
+        DeclareLaunchArgument('enable_relative_filter', default_value='true'),
         DeclareLaunchArgument('enable_pose_viz', default_value='true'),
         DeclareLaunchArgument('video_device', default_value=DEFAULT_VIDEO_DEVICE),
         DeclareLaunchArgument('pixel_format', default_value=DEFAULT_CAMERA_PIXEL_FORMAT),
@@ -295,6 +297,7 @@ def generate_launch_description():
                     'publish_tf': publish_relative_tf,
                 },
             ],
+            condition=IfCondition(enable_relative_filter),
         ),
         Node(
             package='relative_localization_eskf',
@@ -309,6 +312,11 @@ def generate_launch_description():
                     'marker_topic': 'localization/relative/pose_markers',
                 },
             ],
-            condition=IfCondition(enable_pose_viz),
+            condition=IfCondition(
+                PythonExpression([
+                    "'", enable_pose_viz, "'.lower() == 'true' and '",
+                    enable_relative_filter, "'.lower() == 'true'",
+                ])
+            ),
         ),
     ])
