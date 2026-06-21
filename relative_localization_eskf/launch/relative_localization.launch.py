@@ -106,6 +106,15 @@ def generate_launch_description():
     camera_exposure = LaunchConfiguration('camera_exposure')
     camera_gain = LaunchConfiguration('camera_gain')
     camera_brightness = LaunchConfiguration('camera_brightness')
+    aruco_max_position_jump_m = LaunchConfiguration('aruco_max_position_jump_m')
+    aruco_max_reprojection_rmse_px = LaunchConfiguration('aruco_max_reprojection_rmse_px')
+    aruco_max_view_angle_deg = LaunchConfiguration('aruco_max_view_angle_deg')
+    aruco_front_halfspace_min_z_m = LaunchConfiguration('aruco_front_halfspace_min_z_m')
+    aruco_feasible_x_min_m = LaunchConfiguration('aruco_feasible_x_min_m')
+    aruco_feasible_x_max_m = LaunchConfiguration('aruco_feasible_x_max_m')
+    aruco_feasible_abs_y_max_m = LaunchConfiguration('aruco_feasible_abs_y_max_m')
+    aruco_feasible_z_min_m = LaunchConfiguration('aruco_feasible_z_min_m')
+    aruco_feasible_z_max_m = LaunchConfiguration('aruco_feasible_z_max_m')
 
     params = os.path.join(
         get_package_share_directory('relative_localization_eskf'),
@@ -155,6 +164,15 @@ def generate_launch_description():
             default_value=DEFAULT_CAMERA_BRIGHTNESS,
             description='Manual V4L2 brightness value.',
         ),
+        DeclareLaunchArgument('aruco_max_position_jump_m', default_value='0.0'),
+        DeclareLaunchArgument('aruco_max_reprojection_rmse_px', default_value='0.0'),
+        DeclareLaunchArgument('aruco_max_view_angle_deg', default_value='0.0'),
+        DeclareLaunchArgument('aruco_front_halfspace_min_z_m', default_value='-1000.0'),
+        DeclareLaunchArgument('aruco_feasible_x_min_m', default_value='-1000.0'),
+        DeclareLaunchArgument('aruco_feasible_x_max_m', default_value='1000.0'),
+        DeclareLaunchArgument('aruco_feasible_abs_y_max_m', default_value='1000.0'),
+        DeclareLaunchArgument('aruco_feasible_z_min_m', default_value='-1000.0'),
+        DeclareLaunchArgument('aruco_feasible_z_max_m', default_value='1000.0'),
         ExecuteProcess(
             cmd=[
                 'v4l2-ctl',
@@ -269,6 +287,42 @@ def generate_launch_description():
                     'leader_rear_frame': _prefixed_frame(leader_frame_prefix, 'leader_rear'),
                     'raw_aruco_child_frame': _prefixed_frame(frame_prefix, 'base_link_aruco_raw'),
                     'publish_tf': publish_aruco_tf,
+                    'max_position_jump_m': ParameterValue(
+                        aruco_max_position_jump_m,
+                        value_type=float,
+                    ),
+                    'max_reprojection_rmse_px': ParameterValue(
+                        aruco_max_reprojection_rmse_px,
+                        value_type=float,
+                    ),
+                    'max_view_angle_deg': ParameterValue(
+                        aruco_max_view_angle_deg,
+                        value_type=float,
+                    ),
+                    'front_halfspace_min_z_m': ParameterValue(
+                        aruco_front_halfspace_min_z_m,
+                        value_type=float,
+                    ),
+                    'feasible_x_min_m': ParameterValue(
+                        aruco_feasible_x_min_m,
+                        value_type=float,
+                    ),
+                    'feasible_x_max_m': ParameterValue(
+                        aruco_feasible_x_max_m,
+                        value_type=float,
+                    ),
+                    'feasible_abs_y_max_m': ParameterValue(
+                        aruco_feasible_abs_y_max_m,
+                        value_type=float,
+                    ),
+                    'feasible_z_min_m': ParameterValue(
+                        aruco_feasible_z_min_m,
+                        value_type=float,
+                    ),
+                    'feasible_z_max_m': ParameterValue(
+                        aruco_feasible_z_max_m,
+                        value_type=float,
+                    ),
                 },
             ],
         ),

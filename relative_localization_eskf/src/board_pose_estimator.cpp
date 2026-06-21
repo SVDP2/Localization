@@ -209,7 +209,7 @@ std::optional<BoardPoseEstimate> BoardDefinition::estimate_pose(
     const double view_angle = std::acos(
       std::clamp(board_from_camera.translation().z() / std::max(distance, 1.0e-9), -1.0, 1.0)) *
       180.0 / M_PI;
-    if (view_angle > options.max_view_angle_deg) {
+    if (options.max_view_angle_deg > 0.0 && view_angle > options.max_view_angle_deg) {
       last_candidate_rejection =
         "view_angle_gate angle_deg=" + std::to_string(view_angle) +
         " max=" + std::to_string(options.max_view_angle_deg);
@@ -246,7 +246,7 @@ std::optional<BoardPoseEstimate> BoardDefinition::estimate_pose(
 
     const double rmse = reprojection_rmse(
       object_points, image_points, rvecs[i], tvecs[i], camera_matrix, dist_coeffs);
-    if (rmse > options.max_reprojection_rmse_px) {
+    if (options.max_reprojection_rmse_px > 0.0 && rmse > options.max_reprojection_rmse_px) {
       last_candidate_rejection =
         "reprojection_gate rmse=" + std::to_string(rmse) +
         " max=" + std::to_string(options.max_reprojection_rmse_px);
@@ -285,6 +285,9 @@ bool BoardDefinition::passes_motion_gate(
   const Eigen::Isometry3d & previous_board_to_base,
   const BoardPoseEstimatorOptions & options) const
 {
+  if (options.max_position_jump_m <= 0.0) {
+    return true;
+  }
   const double dp = (board_to_base.translation() - previous_board_to_base.translation()).norm();
   (void)previous_board_to_base;
   return dp <= options.max_position_jump_m;
